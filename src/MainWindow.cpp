@@ -22,6 +22,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTextEdit>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -71,6 +72,7 @@ void MainWindow::buildUi()
 
     auto *leftPanel = new QWidget(splitter);
     auto *leftLayout = new QVBoxLayout(leftPanel);
+    auto *leftTabs = new QTabWidget(leftPanel);
 
     auto *modemGroup = new QGroupBox(QStringLiteral("Mercury Modem"), leftPanel);
     auto *modemLayout = new QFormLayout(modemGroup);
@@ -95,6 +97,31 @@ void MainWindow::buildUi()
     modemLayout->addRow(QStringLiteral("Broadcast port"), broadcastPortSpin_);
     modemLayout->addRow(QStringLiteral("Extra args"), modemArgsEdit_);
     modemLayout->addRow(modemButtonRow);
+
+    auto *audioGroup = new QGroupBox(QStringLiteral("Audio I/O"), leftPanel);
+    auto *audioLayout = new QFormLayout(audioGroup);
+    soundSystemCombo_ = new QComboBox(audioGroup);
+    soundSystemCombo_->addItem(QStringLiteral("Auto"), QStringLiteral("auto"));
+    soundSystemCombo_->addItem(QStringLiteral("CoreAudio"), QStringLiteral("coreaudio"));
+    soundSystemCombo_->addItem(QStringLiteral("ALSA"), QStringLiteral("alsa"));
+    soundSystemCombo_->addItem(QStringLiteral("PulseAudio"), QStringLiteral("pulse"));
+    soundSystemCombo_->addItem(QStringLiteral("DirectSound"), QStringLiteral("dsound"));
+    soundSystemCombo_->addItem(QStringLiteral("WASAPI"), QStringLiteral("wasapi"));
+    soundSystemCombo_->addItem(QStringLiteral("OSS"), QStringLiteral("oss"));
+    soundSystemCombo_->addItem(QStringLiteral("AAudio"), QStringLiteral("aaudio"));
+    soundSystemCombo_->addItem(QStringLiteral("Shared memory"), QStringLiteral("shm"));
+    inputDeviceEdit_ = new QLineEdit(audioGroup);
+    inputDeviceEdit_->setPlaceholderText(QStringLiteral("Leave blank for default capture device"));
+    outputDeviceEdit_ = new QLineEdit(audioGroup);
+    outputDeviceEdit_->setPlaceholderText(QStringLiteral("Leave blank for default playback device"));
+    captureChannelCombo_ = new QComboBox(audioGroup);
+    captureChannelCombo_->addItem(QStringLiteral("Left"), QStringLiteral("left"));
+    captureChannelCombo_->addItem(QStringLiteral("Right"), QStringLiteral("right"));
+    captureChannelCombo_->addItem(QStringLiteral("Stereo"), QStringLiteral("stereo"));
+    audioLayout->addRow(QStringLiteral("Sound system"), soundSystemCombo_);
+    audioLayout->addRow(QStringLiteral("Input device"), inputDeviceEdit_);
+    audioLayout->addRow(QStringLiteral("Output device"), outputDeviceEdit_);
+    audioLayout->addRow(QStringLiteral("RX channel"), captureChannelCombo_);
 
     auto *stationGroup = new QGroupBox(QStringLiteral("Station / TNC"), leftPanel);
     auto *stationLayout = new QFormLayout(stationGroup);
@@ -254,11 +281,37 @@ void MainWindow::buildUi()
     catLayout->addRow(catConnectRow);
     catLayout->addRow(QStringLiteral("Frequency"), catFrequencyRow);
 
-    leftLayout->addWidget(modemGroup);
-    leftLayout->addWidget(stationGroup);
-    leftLayout->addWidget(statusGroup);
-    leftLayout->addWidget(beaconGroup, 1);
-    leftLayout->addWidget(catGroup);
+    auto *beaconPage = new QWidget(leftTabs);
+    auto *beaconPageLayout = new QVBoxLayout(beaconPage);
+    beaconPageLayout->addWidget(beaconGroup);
+
+    auto *modemPage = new QWidget(leftTabs);
+    auto *modemPageLayout = new QVBoxLayout(modemPage);
+    modemPageLayout->addWidget(modemGroup);
+    modemPageLayout->addWidget(audioGroup);
+    modemPageLayout->addStretch();
+
+    auto *stationPage = new QWidget(leftTabs);
+    auto *stationPageLayout = new QVBoxLayout(stationPage);
+    stationPageLayout->addWidget(stationGroup);
+    stationPageLayout->addStretch();
+
+    auto *catPage = new QWidget(leftTabs);
+    auto *catPageLayout = new QVBoxLayout(catPage);
+    catPageLayout->addWidget(catGroup);
+    catPageLayout->addStretch();
+
+    auto *statusPage = new QWidget(leftTabs);
+    auto *statusPageLayout = new QVBoxLayout(statusPage);
+    statusPageLayout->addWidget(statusGroup);
+    statusPageLayout->addStretch();
+
+    leftTabs->addTab(beaconPage, QStringLiteral("Beacons"));
+    leftTabs->addTab(modemPage, QStringLiteral("Modem"));
+    leftTabs->addTab(stationPage, QStringLiteral("Station"));
+    leftTabs->addTab(catPage, QStringLiteral("CAT"));
+    leftTabs->addTab(statusPage, QStringLiteral("Status"));
+    leftLayout->addWidget(leftTabs);
 
     auto *chatPanel = new QWidget(splitter);
     auto *chatLayout = new QVBoxLayout(chatPanel);
@@ -298,6 +351,10 @@ void MainWindow::loadSettings()
     modemArgsEdit_->setText(settings.value(QStringLiteral("modem/args")).toString());
     broadcastPortSpin_->setValue(settings.value(QStringLiteral("modem/broadcastPort"), broadcastPortSpin_->value()).toInt());
     autoStartModemCheck_->setChecked(settings.value(QStringLiteral("modem/autoStart"), autoStartModemCheck_->isChecked()).toBool());
+    setComboCurrentData(soundSystemCombo_, settings.value(QStringLiteral("audio/soundSystem"), currentComboData(soundSystemCombo_, QStringLiteral("auto"))));
+    inputDeviceEdit_->setText(settings.value(QStringLiteral("audio/inputDevice")).toString());
+    outputDeviceEdit_->setText(settings.value(QStringLiteral("audio/outputDevice")).toString());
+    setComboCurrentData(captureChannelCombo_, settings.value(QStringLiteral("audio/captureChannel"), currentComboData(captureChannelCombo_, QStringLiteral("left"))));
 
     callsignEdit_->setText(settings.value(QStringLiteral("station/callsign")).toString());
     hostEdit_->setText(settings.value(QStringLiteral("tnc/host"), hostEdit_->text()).toString());
@@ -332,6 +389,10 @@ void MainWindow::saveSettings() const
     settings.setValue(QStringLiteral("modem/args"), modemArgsEdit_->text());
     settings.setValue(QStringLiteral("modem/broadcastPort"), broadcastPortSpin_->value());
     settings.setValue(QStringLiteral("modem/autoStart"), autoStartModemCheck_->isChecked());
+    settings.setValue(QStringLiteral("audio/soundSystem"), currentComboData(soundSystemCombo_, QStringLiteral("auto")));
+    settings.setValue(QStringLiteral("audio/inputDevice"), inputDeviceEdit_->text().trimmed());
+    settings.setValue(QStringLiteral("audio/outputDevice"), outputDeviceEdit_->text().trimmed());
+    settings.setValue(QStringLiteral("audio/captureChannel"), currentComboData(captureChannelCombo_, QStringLiteral("left")));
 
     settings.setValue(QStringLiteral("station/callsign"), localCallsign());
     settings.setValue(QStringLiteral("tnc/host"), hostEdit_->text().trimmed());
@@ -363,6 +424,10 @@ void MainWindow::wireSignals()
         modemPathEdit_->setEnabled(!running);
         modemArgsEdit_->setEnabled(!running);
         broadcastPortSpin_->setEnabled(!running);
+        soundSystemCombo_->setEnabled(!running);
+        inputDeviceEdit_->setEnabled(!running);
+        outputDeviceEdit_->setEnabled(!running);
+        captureChannelCombo_->setEnabled(!running);
         if (running && hostEdit_->text().trimmed() == QLatin1String("127.0.0.1"))
         {
             QTimer::singleShot(1500, this, [this]() {
@@ -477,6 +542,16 @@ void MainWindow::startModem()
     QStringList arguments;
     arguments << QStringLiteral("-p") << QString::number(basePortSpin_->value());
     arguments << QStringLiteral("-b") << QString::number(broadcastPortSpin_->value());
+    const QString soundSystem = soundSystemCombo_->currentData().toString();
+    if (!soundSystem.isEmpty() && soundSystem != QLatin1String("auto"))
+        arguments << QStringLiteral("-x") << soundSystem;
+    const QString inputDevice = inputDeviceEdit_->text().trimmed();
+    if (!inputDevice.isEmpty())
+        arguments << QStringLiteral("-i") << inputDevice;
+    const QString outputDevice = outputDeviceEdit_->text().trimmed();
+    if (!outputDevice.isEmpty())
+        arguments << QStringLiteral("-o") << outputDevice;
+    arguments << QStringLiteral("-k") << captureChannelCombo_->currentData().toString();
     arguments.append(QProcess::splitCommand(modemArgsEdit_->text()));
 
     modem_.start(modemPathEdit_->text(), arguments);

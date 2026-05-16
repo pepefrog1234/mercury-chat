@@ -22,7 +22,7 @@ Useful Mercury commands used here:
 
 Received `CQFRAME <call> <bw>` lines are shown in the beacon table. Double-click a beacon callsign to send `CONNECT <mycall> <theircall>`.
 
-Operator settings are saved with Qt's platform settings store under `Rhizomatica/MercuryChat`. Saved fields include callsign, TNC host/ports, modem path/arguments, beacon interval, selected bandwidth, CAT radio, serial port, baud rate, RTS/DTR states, PTT method, and window geometry.
+Operator settings are saved with Qt's platform settings store under `Rhizomatica/MercuryChat`. Saved fields include callsign, TNC host/ports, modem path/arguments, audio input/output device, sound system, RX channel, beacon interval, selected bandwidth, CAT radio, serial port, baud rate, RTS/DTR states, PTT method, and window geometry.
 
 ## Chat Payload Format
 
@@ -71,6 +71,8 @@ The GUI starts Mercury with the selected ARQ base port and broadcast port:
 ```sh
 mercury -p 8300 -b 8100
 ```
+
+Audio settings in the Modem tab map to Mercury options: sound system becomes `-x`, input device becomes `-i`, output device becomes `-o`, and RX channel becomes `-k`. Leaving input/output blank lets Mercury use the default audio devices.
 
 Extra modem arguments can be added in the Mercury Modem panel. For example, if you want Mercury itself to handle CAT/PTT:
 

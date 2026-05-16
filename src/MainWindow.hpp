@@ -71,6 +71,10 @@ private:
     QPushButton *modemStartButton_ = nullptr;
     QPushButton *modemStopButton_ = nullptr;
     QLabel *modemStatusLabel_ = nullptr;
+    QComboBox *soundSystemCombo_ = nullptr;
+    QLineEdit *inputDeviceEdit_ = nullptr;
+    QLineEdit *outputDeviceEdit_ = nullptr;
+    QComboBox *captureChannelCombo_ = nullptr;
 
     QLineEdit *hostEdit_ = nullptr;
     QSpinBox *basePortSpin_ = nullptr;
