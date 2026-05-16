@@ -30,11 +30,17 @@ TncClient::TncClient(QObject *parent)
         emitSocketState();
     });
     connect(&controlSocket_, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
-        emit statusMessage(QStringLiteral("Control socket error: %1").arg(controlSocket_.errorString()));
+        if (controlSocket_.error() == QAbstractSocket::ConnectionRefusedError)
+            emit statusMessage(QStringLiteral("TNC control port is not ready yet"));
+        else
+            emit statusMessage(QStringLiteral("Control socket error: %1").arg(controlSocket_.errorString()));
         emitSocketState();
     });
     connect(&dataSocket_, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
-        emit statusMessage(QStringLiteral("Data socket error: %1").arg(dataSocket_.errorString()));
+        if (dataSocket_.error() == QAbstractSocket::ConnectionRefusedError)
+            emit statusMessage(QStringLiteral("TNC data port is not ready yet"));
+        else
+            emit statusMessage(QStringLiteral("Data socket error: %1").arg(dataSocket_.errorString()));
         emitSocketState();
     });
 }
@@ -229,4 +235,3 @@ void TncClient::parseControlLine(const QString &line)
             emit bitrateUpdated(match.captured(1).toInt(), match.captured(2).toInt());
     }
 }
-

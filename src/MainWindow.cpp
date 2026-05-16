@@ -372,6 +372,8 @@ void MainWindow::buildUi()
     statusBar()->showMessage(QStringLiteral("Mercury will start automatically if the executable is available."));
 
     beaconTimer_ = new QTimer(this);
+    tncRetryTimer_ = new QTimer(this);
+    tncRetryTimer_->setInterval(2000);
 }
 
 void MainWindow::loadSettings()
@@ -467,11 +469,11 @@ void MainWindow::wireSignals()
         captureChannelCombo_->setEnabled(!running);
         if (running && hostEdit_->text().trimmed() == QLatin1String("127.0.0.1"))
         {
-            QTimer::singleShot(1500, this, [this]() {
-                if (!tnc_.isControlConnected() && modem_.isRunning())
-                    tnc_.connectToModem(hostEdit_->text().trimmed(), static_cast<quint16>(basePortSpin_->value()));
-            });
+            tncRetryAttempts_ = 0;
+            tncRetryTimer_->start();
         }
+        if (!running)
+            tncRetryTimer_->stop();
     });
     connect(&modem_, &ModemProcess::statusMessage, this, [this](const QString &message) {
         statusBar()->showMessage(message, 7000);
@@ -506,6 +508,7 @@ void MainWindow::wireSignals()
             beaconTimer_->start(value * 1000);
     });
     connect(beaconTimer_, &QTimer::timeout, this, &MainWindow::sendBeacon);
+    connect(tncRetryTimer_, &QTimer::timeout, this, &MainWindow::retryTncConnection);
 
     connect(&tnc_, &TncClient::connectionStateChanged, this, &MainWindow::updateTncState);
     connect(&tnc_, &TncClient::statusMessage, this, [this](const QString &message) {
@@ -607,10 +610,32 @@ void MainWindow::connectTnc()
 
     if (tnc_.isControlConnected() || tnc_.isDataConnected())
     {
+        tncRetryTimer_->stop();
         tnc_.disconnectFromModem();
         return;
     }
 
+    tncRetryAttempts_ = 0;
+    tncRetryTimer_->start();
+    tnc_.connectToModem(hostEdit_->text().trimmed(), static_cast<quint16>(basePortSpin_->value()));
+}
+
+void MainWindow::retryTncConnection()
+{
+    if (tnc_.isControlConnected())
+    {
+        tncRetryTimer_->stop();
+        return;
+    }
+
+    if (tncRetryAttempts_ >= 20)
+    {
+        tncRetryTimer_->stop();
+        appendSystemLine(QStringLiteral("TNC connection retry stopped; modem control port is still unavailable."));
+        return;
+    }
+
+    ++tncRetryAttempts_;
     tnc_.connectToModem(hostEdit_->text().trimmed(), static_cast<quint16>(basePortSpin_->value()));
 }
 
@@ -635,6 +660,17 @@ void MainWindow::sendBeacon()
     {
         autoBeaconCheck_->setChecked(false);
         QMessageBox::warning(this, QStringLiteral("Callsign required"), QStringLiteral("Set a valid local callsign before sending a beacon."));
+        return;
+    }
+
+    if (!tnc_.isControlConnected())
+    {
+        appendSystemLine(QStringLiteral("Beacon not sent: TNC control port is not connected."));
+        if (modem_.isRunning())
+        {
+            tncRetryAttempts_ = 0;
+            tncRetryTimer_->start();
+        }
         return;
     }
 
@@ -742,6 +778,8 @@ void MainWindow::connectOrDisconnectCat()
 void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
 {
     tncConnectButton_->setText((controlConnected || dataConnected) ? QStringLiteral("Disconnect TNC") : QStringLiteral("Connect TNC"));
+    if (controlConnected)
+        tncRetryTimer_->stop();
     stationInitButton_->setEnabled(controlConnected);
     beaconSendButton_->setEnabled(controlConnected);
     connectBeaconButton_->setEnabled(controlConnected);

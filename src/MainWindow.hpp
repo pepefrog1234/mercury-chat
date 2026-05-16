@@ -37,6 +37,7 @@ private slots:
     void connectSelectedBeacon();
     void startModem();
     void stopModem();
+    void retryTncConnection();
     void sendChatMessage();
     void onBeaconReceived(const QString &callsign, int bandwidthHz);
     void onLinkConnected(const QString &source, const QString &destination, int bandwidthHz);
@@ -96,6 +97,8 @@ private:
     QTableWidget *beaconTable_ = nullptr;
     QPushButton *connectBeaconButton_ = nullptr;
     QTimer *beaconTimer_ = nullptr;
+    QTimer *tncRetryTimer_ = nullptr;
+    int tncRetryAttempts_ = 0;
 
     QTextEdit *transcript_ = nullptr;
     QPlainTextEdit *messageEdit_ = nullptr;
