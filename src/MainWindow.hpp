@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CatController.hpp"
+#include "ModemProcess.hpp"
 #include "TncClient.hpp"
 
 #include <QByteArray>
@@ -29,6 +30,8 @@ private slots:
     void initializeStation();
     void sendBeacon();
     void connectSelectedBeacon();
+    void startModem();
+    void stopModem();
     void sendChatMessage();
     void onBeaconReceived(const QString &callsign, int bandwidthHz);
     void onLinkConnected(const QString &source, const QString &destination, int bandwidthHz);
@@ -48,9 +51,18 @@ private:
 
     TncClient tnc_;
     CatController cat_;
+    ModemProcess modem_;
     QByteArray chatRxBuffer_;
     QString peerCallsign_;
     bool arqConnected_ = false;
+
+    QLineEdit *modemPathEdit_ = nullptr;
+    QLineEdit *modemArgsEdit_ = nullptr;
+    QSpinBox *broadcastPortSpin_ = nullptr;
+    QCheckBox *autoStartModemCheck_ = nullptr;
+    QPushButton *modemStartButton_ = nullptr;
+    QPushButton *modemStopButton_ = nullptr;
+    QLabel *modemStatusLabel_ = nullptr;
 
     QLineEdit *hostEdit_ = nullptr;
     QSpinBox *basePortSpin_ = nullptr;
@@ -85,5 +97,5 @@ private:
     QLineEdit *catFrequencyEdit_ = nullptr;
     QPushButton *catSetFreqButton_ = nullptr;
     QCheckBox *catPttCheck_ = nullptr;
+    QCheckBox *catFollowPttCheck_ = nullptr;
 };
-

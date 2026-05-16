@@ -44,6 +44,8 @@ add_library(mercurychat_core STATIC
     src/CatController.hpp
     src/ChatProtocol.cpp
     src/ChatProtocol.hpp
+    src/ModemProcess.cpp
+    src/ModemProcess.hpp
     src/TncClient.cpp
     src/TncClient.hpp)
 
@@ -76,4 +78,3 @@ target_link_libraries(mercurychat_tests PRIVATE
     Qt6::Core)
 
 add_test(NAME chat_protocol COMMAND mercurychat_tests)
-

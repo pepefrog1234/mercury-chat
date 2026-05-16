@@ -55,13 +55,28 @@ cmake --build mercury-chat/build
 
 ## Run
 
-Start Mercury first, for example:
+By default, Mercury Chat tries to start the Mercury modem automatically when the GUI opens. It looks for the executable in this order:
+
+- `MERCURY_MODEM_PATH`
+- next to the `mercury-chat` executable
+- common developer layouts such as `../../mercury/mercury`
+- `mercury` in `PATH`
+
+When using the sibling Mercury source checkout, build Mercury first so that `../../mercury/mercury` exists. On platforms where the upstream Mercury build is not available, install a release build and either put `mercury` in `PATH` or set `MERCURY_MODEM_PATH`.
+
+The GUI starts Mercury with the selected ARQ base port and broadcast port:
+
+```sh
+mercury -p 8300 -b 8100
+```
+
+Extra modem arguments can be added in the Mercury Modem panel. For example, if you want Mercury itself to handle CAT/PTT:
 
 ```sh
 ./mercury -p 8300 -b 8100 -R <hamlib_model_id> -A <radio_device>
 ```
 
-If Mercury is already controlling PTT through hamlib, use this client's CAT panel mainly for readback and cautious manual tests. Avoid keying PTT from two programs at the same time.
+The default architecture is the opposite: Mercury runs without `-R/-A`, and Mercury Chat handles PTT through its hamlib CAT panel by following TNC `PTT ON` / `PTT OFF` events. Avoid enabling CAT/PTT in both Mercury and Mercury Chat at the same time.
 
 Then launch:
 

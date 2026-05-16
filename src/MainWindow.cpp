@@ -12,6 +12,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QProcess>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSignalBlocker>
@@ -43,6 +44,10 @@ MainWindow::MainWindow(QWidget *parent)
     wireSignals();
     resize(1180, 760);
     setWindowTitle(QStringLiteral("Mercury Chat"));
+    QTimer::singleShot(0, this, [this]() {
+        if (autoStartModemCheck_->isChecked())
+            startModem();
+    });
 }
 
 void MainWindow::buildUi()
@@ -53,6 +58,30 @@ void MainWindow::buildUi()
 
     auto *leftPanel = new QWidget(splitter);
     auto *leftLayout = new QVBoxLayout(leftPanel);
+
+    auto *modemGroup = new QGroupBox(QStringLiteral("Mercury Modem"), leftPanel);
+    auto *modemLayout = new QFormLayout(modemGroup);
+    modemPathEdit_ = new QLineEdit(modem_.defaultExecutablePath(), modemGroup);
+    modemArgsEdit_ = new QLineEdit(modemGroup);
+    modemArgsEdit_->setPlaceholderText(QStringLiteral("Extra Mercury arguments"));
+    broadcastPortSpin_ = new QSpinBox(modemGroup);
+    broadcastPortSpin_->setRange(1, 65535);
+    broadcastPortSpin_->setValue(8100);
+    autoStartModemCheck_ = new QCheckBox(QStringLiteral("Start on app launch"), modemGroup);
+    autoStartModemCheck_->setChecked(true);
+    modemStartButton_ = new QPushButton(QStringLiteral("Start Modem"), modemGroup);
+    modemStopButton_ = new QPushButton(QStringLiteral("Stop Modem"), modemGroup);
+    modemStopButton_->setEnabled(false);
+    auto *modemButtonRow = new QWidget(modemGroup);
+    auto *modemButtonLayout = new QHBoxLayout(modemButtonRow);
+    modemButtonLayout->setContentsMargins(0, 0, 0, 0);
+    modemButtonLayout->addWidget(autoStartModemCheck_);
+    modemButtonLayout->addWidget(modemStartButton_);
+    modemButtonLayout->addWidget(modemStopButton_);
+    modemLayout->addRow(QStringLiteral("Executable"), modemPathEdit_);
+    modemLayout->addRow(QStringLiteral("Broadcast port"), broadcastPortSpin_);
+    modemLayout->addRow(QStringLiteral("Extra args"), modemArgsEdit_);
+    modemLayout->addRow(modemButtonRow);
 
     auto *stationGroup = new QGroupBox(QStringLiteral("Station / TNC"), leftPanel);
     auto *stationLayout = new QFormLayout(stationGroup);
@@ -92,11 +121,13 @@ void MainWindow::buildUi()
     auto *statusGroup = new QGroupBox(QStringLiteral("Status"), leftPanel);
     auto *statusLayout = new QFormLayout(statusGroup);
     tncStatusLabel_ = new QLabel(QStringLiteral("Disconnected"), statusGroup);
+    modemStatusLabel_ = new QLabel(QStringLiteral("Stopped"), statusGroup);
     linkStatusLabel_ = new QLabel(QStringLiteral("No ARQ link"), statusGroup);
     pttStatusLabel_ = new QLabel(QStringLiteral("PTT off"), statusGroup);
     bufferStatusLabel_ = new QLabel(QStringLiteral("0 bytes"), statusGroup);
     snrStatusLabel_ = new QLabel(QStringLiteral("-"), statusGroup);
     bitrateStatusLabel_ = new QLabel(QStringLiteral("-"), statusGroup);
+    statusLayout->addRow(QStringLiteral("Modem"), modemStatusLabel_);
     statusLayout->addRow(QStringLiteral("TNC"), tncStatusLabel_);
     statusLayout->addRow(QStringLiteral("Link"), linkStatusLabel_);
     statusLayout->addRow(QStringLiteral("PTT"), pttStatusLabel_);
@@ -153,15 +184,19 @@ void MainWindow::buildUi()
     catFrequencyEdit_->setPlaceholderText(QStringLiteral("Frequency in Hz"));
     catSetFreqButton_ = new QPushButton(QStringLiteral("Set"), catGroup);
     catPttCheck_ = new QCheckBox(QStringLiteral("PTT"), catGroup);
+    catFollowPttCheck_ = new QCheckBox(QStringLiteral("Follow modem PTT"), catGroup);
+    catFollowPttCheck_->setChecked(true);
     catReadFreqButton_->setEnabled(false);
     catSetFreqButton_->setEnabled(false);
     catPttCheck_->setEnabled(false);
+    catFollowPttCheck_->setEnabled(false);
 
     auto *catConnectRow = new QWidget(catGroup);
     auto *catConnectLayout = new QHBoxLayout(catConnectRow);
     catConnectLayout->setContentsMargins(0, 0, 0, 0);
     catConnectLayout->addWidget(catConnectButton_);
     catConnectLayout->addWidget(catPttCheck_);
+    catConnectLayout->addWidget(catFollowPttCheck_);
 
     auto *catFrequencyRow = new QWidget(catGroup);
     auto *catFrequencyLayout = new QHBoxLayout(catFrequencyRow);
@@ -176,6 +211,7 @@ void MainWindow::buildUi()
     catLayout->addRow(catConnectRow);
     catLayout->addRow(QStringLiteral("Frequency"), catFrequencyRow);
 
+    leftLayout->addWidget(modemGroup);
     leftLayout->addWidget(stationGroup);
     leftLayout->addWidget(statusGroup);
     leftLayout->addWidget(beaconGroup, 1);
@@ -204,13 +240,38 @@ void MainWindow::buildUi()
 
     outerLayout->addWidget(splitter);
     setCentralWidget(central);
-    statusBar()->showMessage(QStringLiteral("Start Mercury, connect the TNC, then initialize your station."));
+    statusBar()->showMessage(QStringLiteral("Mercury will start automatically if the executable is available."));
 
     beaconTimer_ = new QTimer(this);
 }
 
 void MainWindow::wireSignals()
 {
+    connect(modemStartButton_, &QPushButton::clicked, this, &MainWindow::startModem);
+    connect(modemStopButton_, &QPushButton::clicked, this, &MainWindow::stopModem);
+    connect(&modem_, &ModemProcess::runningChanged, this, [this](bool running) {
+        modemStatusLabel_->setText(running ? QStringLiteral("Running") : QStringLiteral("Stopped"));
+        modemStartButton_->setEnabled(!running);
+        modemStopButton_->setEnabled(running);
+        modemPathEdit_->setEnabled(!running);
+        modemArgsEdit_->setEnabled(!running);
+        broadcastPortSpin_->setEnabled(!running);
+        if (running && hostEdit_->text().trimmed() == QLatin1String("127.0.0.1"))
+        {
+            QTimer::singleShot(1500, this, [this]() {
+                if (!tnc_.isControlConnected() && modem_.isRunning())
+                    tnc_.connectToModem(hostEdit_->text().trimmed(), static_cast<quint16>(basePortSpin_->value()));
+            });
+        }
+    });
+    connect(&modem_, &ModemProcess::statusMessage, this, [this](const QString &message) {
+        statusBar()->showMessage(message, 7000);
+        appendSystemLine(message);
+    });
+    connect(&modem_, &ModemProcess::outputLine, this, [this](const QString &line) {
+        appendSystemLine(QStringLiteral("modem: %1").arg(line));
+    });
+
     connect(tncConnectButton_, &QPushButton::clicked, this, &MainWindow::connectTnc);
     connect(stationInitButton_, &QPushButton::clicked, this, &MainWindow::initializeStation);
     connect(linkDisconnectButton_, &QPushButton::clicked, &tnc_, &TncClient::disconnectLink);
@@ -252,6 +313,8 @@ void MainWindow::wireSignals()
     });
     connect(&tnc_, &TncClient::pttChanged, this, [this](bool enabled) {
         pttStatusLabel_->setText(enabled ? QStringLiteral("PTT on") : QStringLiteral("PTT off"));
+        if (catFollowPttCheck_->isChecked() && cat_.isConnected())
+            cat_.setPtt(enabled);
     });
     connect(&tnc_, &TncClient::bufferUpdated, this, [this](int bytes) {
         bufferStatusLabel_->setText(QStringLiteral("%1 bytes").arg(bytes));
@@ -275,6 +338,7 @@ void MainWindow::wireSignals()
         catReadFreqButton_->setEnabled(connected);
         catSetFreqButton_->setEnabled(connected);
         catPttCheck_->setEnabled(connected);
+        catFollowPttCheck_->setEnabled(connected);
         if (!connected)
         {
             const QSignalBlocker blocker(catPttCheck_);
@@ -291,6 +355,23 @@ void MainWindow::wireSignals()
     connect(&cat_, &CatController::pttChanged, this, [this](bool enabled) {
         catPttCheck_->setChecked(enabled);
     });
+}
+
+void MainWindow::startModem()
+{
+    QStringList arguments;
+    arguments << QStringLiteral("-p") << QString::number(basePortSpin_->value());
+    arguments << QStringLiteral("-b") << QString::number(broadcastPortSpin_->value());
+    arguments.append(QProcess::splitCommand(modemArgsEdit_->text()));
+
+    modem_.start(modemPathEdit_->text(), arguments);
+}
+
+void MainWindow::stopModem()
+{
+    if (tnc_.isControlConnected() || tnc_.isDataConnected())
+        tnc_.disconnectFromModem();
+    modem_.stop();
 }
 
 void MainWindow::connectTnc()
