@@ -338,32 +338,42 @@ void MainWindow::buildUi()
     catPageLayout->addWidget(catGroup);
     catPageLayout->addStretch();
 
-    auto *statusPage = new QWidget(leftTabs);
-    auto *statusPageLayout = new QVBoxLayout(statusPage);
-    statusPageLayout->addWidget(statusGroup);
-    statusPageLayout->addStretch();
-
     leftTabs->addTab(beaconPage, QStringLiteral("Beacons"));
     leftTabs->addTab(modemPage, QStringLiteral("Modem"));
     leftTabs->addTab(stationPage, QStringLiteral("Station"));
     leftTabs->addTab(catPage, QStringLiteral("CAT"));
-    leftTabs->addTab(statusPage, QStringLiteral("Status"));
     leftLayout->addWidget(leftTabs);
 
     auto *chatPanel = new QWidget(splitter);
-    auto *chatLayout = new QVBoxLayout(chatPanel);
-    transcript_ = new QTextEdit(chatPanel);
+    auto *chatPanelLayout = new QVBoxLayout(chatPanel);
+    auto *mainTabs = new QTabWidget(chatPanel);
+
+    auto *chatPage = new QWidget(mainTabs);
+    auto *chatLayout = new QVBoxLayout(chatPage);
+    transcript_ = new QTextEdit(chatPage);
     transcript_->setReadOnly(true);
     transcript_->setAcceptRichText(false);
-    messageEdit_ = new QPlainTextEdit(chatPanel);
+    messageEdit_ = new QPlainTextEdit(chatPage);
     messageEdit_->setPlaceholderText(QStringLiteral("Type UTF-8 text here"));
     messageEdit_->setFixedHeight(96);
-    sendButton_ = new QPushButton(QStringLiteral("Send"), chatPanel);
+    sendButton_ = new QPushButton(QStringLiteral("Send"), chatPage);
     sendButton_->setEnabled(false);
 
     chatLayout->addWidget(transcript_, 1);
     chatLayout->addWidget(messageEdit_);
     chatLayout->addWidget(sendButton_);
+
+    auto *statusPage = new QWidget(mainTabs);
+    auto *statusPageLayout = new QVBoxLayout(statusPage);
+    statusLog_ = new QPlainTextEdit(statusPage);
+    statusLog_->setReadOnly(true);
+    statusLog_->setLineWrapMode(QPlainTextEdit::NoWrap);
+    statusPageLayout->addWidget(statusGroup);
+    statusPageLayout->addWidget(statusLog_, 1);
+
+    mainTabs->addTab(chatPage, QStringLiteral("Chat"));
+    mainTabs->addTab(statusPage, QStringLiteral("Modem Status"));
+    chatPanelLayout->addWidget(mainTabs);
 
     splitter->addWidget(leftPanel);
     splitter->addWidget(chatPanel);
@@ -483,10 +493,10 @@ void MainWindow::wireSignals()
     });
     connect(&modem_, &ModemProcess::statusMessage, this, [this](const QString &message) {
         statusBar()->showMessage(message, 7000);
-        appendSystemLine(message);
+        appendStatusLine(QStringLiteral("modem: %1").arg(message));
     });
     connect(&modem_, &ModemProcess::outputLine, this, [this](const QString &line) {
-        appendSystemLine(QStringLiteral("modem: %1").arg(line));
+        appendStatusLine(QStringLiteral("modem: %1").arg(line));
     });
 
     connect(tncConnectButton_, &QPushButton::clicked, this, &MainWindow::connectTnc);
@@ -519,9 +529,10 @@ void MainWindow::wireSignals()
     connect(&tnc_, &TncClient::connectionStateChanged, this, &MainWindow::updateTncState);
     connect(&tnc_, &TncClient::statusMessage, this, [this](const QString &message) {
         statusBar()->showMessage(message, 5000);
+        appendStatusLine(QStringLiteral("TNC: %1").arg(message));
     });
     connect(&tnc_, &TncClient::controlLineReceived, this, [this](const QString &line) {
-        appendSystemLine(QStringLiteral("TNC: %1").arg(line));
+        appendStatusLine(QStringLiteral("TNC: %1").arg(line));
     });
     connect(&tnc_, &TncClient::cqFrameReceived, this, &MainWindow::onBeaconReceived);
     connect(&tnc_, &TncClient::linkConnected, this, &MainWindow::onLinkConnected);
@@ -581,7 +592,7 @@ void MainWindow::wireSignals()
     });
     connect(&cat_, &CatController::statusMessage, this, [this](const QString &message) {
         statusBar()->showMessage(message, 5000);
-        appendSystemLine(message);
+        appendStatusLine(QStringLiteral("CAT: %1").arg(message));
     });
     connect(&cat_, &CatController::frequencyChanged, this, [this](qint64 frequencyHz) {
         catFrequencyEdit_->setText(QString::number(frequencyHz));
@@ -647,7 +658,7 @@ void MainWindow::retryTncConnection()
     if (tncRetryAttempts_ >= 20)
     {
         tncRetryTimer_->stop();
-        appendSystemLine(QStringLiteral("TNC connection retry stopped; modem control port is still unavailable."));
+        appendStatusLine(QStringLiteral("TNC connection retry stopped; modem control port is still unavailable."));
         return;
     }
 
@@ -668,7 +679,7 @@ bool MainWindow::applyStationSettings(bool warnIfMissing)
     if (!tnc_.isControlConnected())
     {
         if (warnIfMissing)
-            appendSystemLine(QStringLiteral("Station settings not applied: TNC control port is not connected."));
+            appendStatusLine(QStringLiteral("Station settings not applied: TNC control port is not connected."));
         return false;
     }
 
@@ -680,7 +691,7 @@ bool MainWindow::applyStationSettings(bool warnIfMissing)
 void MainWindow::initializeStation()
 {
     if (applyStationSettings(true))
-        appendSystemLine(QStringLiteral("Initialized %1 at %2").arg(localCallsign(), bandwidthLabel(selectedBandwidth())));
+        appendStatusLine(QStringLiteral("Initialized %1 at %2").arg(localCallsign(), bandwidthLabel(selectedBandwidth())));
 }
 
 void MainWindow::sendBeacon()
@@ -818,7 +829,7 @@ bool MainWindow::connectCat(bool interactive)
         if (interactive)
             QMessageBox::warning(this, QStringLiteral("Radio required"), QStringLiteral("Choose a valid hamlib radio model first."));
         else
-            appendSystemLine(QStringLiteral("CAT auto-connect skipped: choose a valid hamlib radio model first."));
+            appendStatusLine(QStringLiteral("CAT auto-connect skipped: choose a valid hamlib radio model first."));
         return false;
     }
 
@@ -867,6 +878,12 @@ void MainWindow::appendSystemLine(const QString &text)
     transcript_->moveCursor(QTextCursor::End);
     transcript_->insertPlainText(QStringLiteral("[%1] * %2\n").arg(utcTimeLabel(), text));
     transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
+}
+
+void MainWindow::appendStatusLine(const QString &text)
+{
+    statusLog_->appendPlainText(QStringLiteral("[%1] %2").arg(utcTimeLabel(), text));
+    statusLog_->verticalScrollBar()->setValue(statusLog_->verticalScrollBar()->maximum());
 }
 
 void MainWindow::updateBeaconRow(const QString &callsign, int bandwidthHz)

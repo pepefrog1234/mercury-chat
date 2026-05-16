@@ -53,6 +53,7 @@ private:
     void saveSettings() const;
     void appendTranscript(const QString &speaker, const QString &text);
     void appendSystemLine(const QString &text);
+    void appendStatusLine(const QString &text);
     void updateBeaconRow(const QString &callsign, int bandwidthHz);
     bool applyStationSettings(bool warnIfMissing);
     bool connectCat(bool interactive);
@@ -105,6 +106,7 @@ private:
     QTextEdit *transcript_ = nullptr;
     QPlainTextEdit *messageEdit_ = nullptr;
     QPushButton *sendButton_ = nullptr;
+    QPlainTextEdit *statusLog_ = nullptr;
 
     QComboBox *catModelCombo_ = nullptr;
     QLineEdit *catDeviceEdit_ = nullptr;

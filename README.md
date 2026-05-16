@@ -24,6 +24,8 @@ Received `CQFRAME <call> <bw>` lines are shown in the beacon table. Double-click
 
 Mercury Chat deliberately leaves Mercury's adaptive FreeDV mode selection alone. The GUI only sends the selected `BW...` token and advertises that token in beacons; it does not select DATAC modes, force speed levels, or override ARQ gear shifting. `BITRATE`, `SN`, `BUFFER`, and `PTT` lines from Mercury are treated as status telemetry.
 
+The main `Chat` tab is kept for chat text plus beacon and link activity. Mercury process output, TNC control lines, CAT messages, and telemetry are shown in the separate `Modem Status` tab.
+
 Operator settings are saved with Qt's platform settings store under `Rhizomatica/MercuryChat`. Saved fields include callsign, TNC host/ports, modem path/arguments, audio input/output device, sound system, RX channel, beacon interval, selected bandwidth, CAT radio, serial port, baud rate, RTS/DTR states, PTT method, and window geometry.
 
 ## Chat Payload Format
