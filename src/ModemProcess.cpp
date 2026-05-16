@@ -79,7 +79,10 @@ void ModemProcess::start(const QString &executablePath, const QStringList &argum
         return;
     }
 
-    const QString executable = normalizeExecutablePath(executablePath);
+    QString executable = normalizeExecutablePath(executablePath);
+    if (executable.isEmpty())
+        executable = normalizeExecutablePath(defaultExecutablePath());
+
     if (executable.isEmpty())
     {
         emit statusMessage(QStringLiteral("Mercury executable was not found. Build Mercury or set MERCURY_MODEM_PATH."));
@@ -169,4 +172,3 @@ QString ModemProcess::normalizeExecutablePath(const QString &path) const
 
     return {};
 }
-
