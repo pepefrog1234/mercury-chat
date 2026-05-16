@@ -12,6 +12,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QAudioDevice>
+#include <QMediaDevices>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
@@ -42,6 +44,33 @@ QString utcTimeLabel()
 QVariant currentComboData(const QComboBox *combo, const QVariant &fallback = {})
 {
     return combo && combo->currentIndex() >= 0 ? combo->currentData() : fallback;
+}
+
+QString comboValue(const QComboBox *combo)
+{
+    if (!combo)
+        return {};
+
+    const int index = combo->currentIndex();
+    if (index >= 0 && combo->currentText() == combo->itemText(index))
+        return combo->itemData(index).toString().trimmed();
+
+    return combo->currentText().trimmed();
+}
+
+void addAudioDeviceItems(QComboBox *combo, const QList<QAudioDevice> &devices)
+{
+    combo->addItem(QStringLiteral("Default"), QString());
+
+    QStringList seen;
+    for (const QAudioDevice &device : devices)
+    {
+        const QString description = device.description().trimmed();
+        if (description.isEmpty() || seen.contains(description, Qt::CaseInsensitive))
+            continue;
+        seen.append(description);
+        combo->addItem(description, description);
+    }
 }
 }
 
@@ -110,17 +139,21 @@ void MainWindow::buildUi()
     soundSystemCombo_->addItem(QStringLiteral("OSS"), QStringLiteral("oss"));
     soundSystemCombo_->addItem(QStringLiteral("AAudio"), QStringLiteral("aaudio"));
     soundSystemCombo_->addItem(QStringLiteral("Shared memory"), QStringLiteral("shm"));
-    inputDeviceEdit_ = new QLineEdit(audioGroup);
-    inputDeviceEdit_->setPlaceholderText(QStringLiteral("Leave blank for default capture device"));
-    outputDeviceEdit_ = new QLineEdit(audioGroup);
-    outputDeviceEdit_->setPlaceholderText(QStringLiteral("Leave blank for default playback device"));
+    inputDeviceCombo_ = new QComboBox(audioGroup);
+    inputDeviceCombo_->setEditable(true);
+    inputDeviceCombo_->setInsertPolicy(QComboBox::NoInsert);
+    addAudioDeviceItems(inputDeviceCombo_, QMediaDevices::audioInputs());
+    outputDeviceCombo_ = new QComboBox(audioGroup);
+    outputDeviceCombo_->setEditable(true);
+    outputDeviceCombo_->setInsertPolicy(QComboBox::NoInsert);
+    addAudioDeviceItems(outputDeviceCombo_, QMediaDevices::audioOutputs());
     captureChannelCombo_ = new QComboBox(audioGroup);
     captureChannelCombo_->addItem(QStringLiteral("Left"), QStringLiteral("left"));
     captureChannelCombo_->addItem(QStringLiteral("Right"), QStringLiteral("right"));
     captureChannelCombo_->addItem(QStringLiteral("Stereo"), QStringLiteral("stereo"));
     audioLayout->addRow(QStringLiteral("Sound system"), soundSystemCombo_);
-    audioLayout->addRow(QStringLiteral("Input device"), inputDeviceEdit_);
-    audioLayout->addRow(QStringLiteral("Output device"), outputDeviceEdit_);
+    audioLayout->addRow(QStringLiteral("Input device"), inputDeviceCombo_);
+    audioLayout->addRow(QStringLiteral("Output device"), outputDeviceCombo_);
     audioLayout->addRow(QStringLiteral("RX channel"), captureChannelCombo_);
 
     auto *stationGroup = new QGroupBox(QStringLiteral("Station / TNC"), leftPanel);
@@ -352,8 +385,12 @@ void MainWindow::loadSettings()
     broadcastPortSpin_->setValue(settings.value(QStringLiteral("modem/broadcastPort"), broadcastPortSpin_->value()).toInt());
     autoStartModemCheck_->setChecked(settings.value(QStringLiteral("modem/autoStart"), autoStartModemCheck_->isChecked()).toBool());
     setComboCurrentData(soundSystemCombo_, settings.value(QStringLiteral("audio/soundSystem"), currentComboData(soundSystemCombo_, QStringLiteral("auto"))));
-    inputDeviceEdit_->setText(settings.value(QStringLiteral("audio/inputDevice")).toString());
-    outputDeviceEdit_->setText(settings.value(QStringLiteral("audio/outputDevice")).toString());
+    const QString inputDevice = settings.value(QStringLiteral("audio/inputDevice")).toString();
+    if (!setComboCurrentData(inputDeviceCombo_, inputDevice))
+        inputDeviceCombo_->setCurrentText(inputDevice);
+    const QString outputDevice = settings.value(QStringLiteral("audio/outputDevice")).toString();
+    if (!setComboCurrentData(outputDeviceCombo_, outputDevice))
+        outputDeviceCombo_->setCurrentText(outputDevice);
     setComboCurrentData(captureChannelCombo_, settings.value(QStringLiteral("audio/captureChannel"), currentComboData(captureChannelCombo_, QStringLiteral("left"))));
 
     callsignEdit_->setText(settings.value(QStringLiteral("station/callsign")).toString());
@@ -390,8 +427,8 @@ void MainWindow::saveSettings() const
     settings.setValue(QStringLiteral("modem/broadcastPort"), broadcastPortSpin_->value());
     settings.setValue(QStringLiteral("modem/autoStart"), autoStartModemCheck_->isChecked());
     settings.setValue(QStringLiteral("audio/soundSystem"), currentComboData(soundSystemCombo_, QStringLiteral("auto")));
-    settings.setValue(QStringLiteral("audio/inputDevice"), inputDeviceEdit_->text().trimmed());
-    settings.setValue(QStringLiteral("audio/outputDevice"), outputDeviceEdit_->text().trimmed());
+    settings.setValue(QStringLiteral("audio/inputDevice"), comboValue(inputDeviceCombo_));
+    settings.setValue(QStringLiteral("audio/outputDevice"), comboValue(outputDeviceCombo_));
     settings.setValue(QStringLiteral("audio/captureChannel"), currentComboData(captureChannelCombo_, QStringLiteral("left")));
 
     settings.setValue(QStringLiteral("station/callsign"), localCallsign());
@@ -425,8 +462,8 @@ void MainWindow::wireSignals()
         modemArgsEdit_->setEnabled(!running);
         broadcastPortSpin_->setEnabled(!running);
         soundSystemCombo_->setEnabled(!running);
-        inputDeviceEdit_->setEnabled(!running);
-        outputDeviceEdit_->setEnabled(!running);
+        inputDeviceCombo_->setEnabled(!running);
+        outputDeviceCombo_->setEnabled(!running);
         captureChannelCombo_->setEnabled(!running);
         if (running && hostEdit_->text().trimmed() == QLatin1String("127.0.0.1"))
         {
@@ -545,10 +582,10 @@ void MainWindow::startModem()
     const QString soundSystem = soundSystemCombo_->currentData().toString();
     if (!soundSystem.isEmpty() && soundSystem != QLatin1String("auto"))
         arguments << QStringLiteral("-x") << soundSystem;
-    const QString inputDevice = inputDeviceEdit_->text().trimmed();
+    const QString inputDevice = comboValue(inputDeviceCombo_);
     if (!inputDevice.isEmpty())
         arguments << QStringLiteral("-i") << inputDevice;
-    const QString outputDevice = outputDeviceEdit_->text().trimmed();
+    const QString outputDevice = comboValue(outputDeviceCombo_);
     if (!outputDevice.isEmpty())
         arguments << QStringLiteral("-o") << outputDevice;
     arguments << QStringLiteral("-k") << captureChannelCombo_->currentData().toString();

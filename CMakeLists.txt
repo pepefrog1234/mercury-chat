@@ -13,7 +13,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Network Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Multimedia Network Widgets)
 
 option(MERCURYCHAT_USE_HAMLIB "Build hamlib CAT support" ON)
 
@@ -66,6 +66,7 @@ add_executable(mercury-chat
 
 target_link_libraries(mercury-chat PRIVATE
     mercurychat_core
+    Qt6::Multimedia
     Qt6::Widgets)
 
 enable_testing()

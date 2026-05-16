@@ -72,8 +72,8 @@ private:
     QPushButton *modemStopButton_ = nullptr;
     QLabel *modemStatusLabel_ = nullptr;
     QComboBox *soundSystemCombo_ = nullptr;
-    QLineEdit *inputDeviceEdit_ = nullptr;
-    QLineEdit *outputDeviceEdit_ = nullptr;
+    QComboBox *inputDeviceCombo_ = nullptr;
+    QComboBox *outputDeviceCombo_ = nullptr;
     QComboBox *captureChannelCombo_ = nullptr;
 
     QLineEdit *hostEdit_ = nullptr;
