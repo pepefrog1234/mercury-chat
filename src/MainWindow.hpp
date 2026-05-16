@@ -55,6 +55,7 @@ private:
     void appendSystemLine(const QString &text);
     void updateBeaconRow(const QString &callsign, int bandwidthHz);
     bool applyStationSettings(bool warnIfMissing);
+    bool connectCat(bool interactive);
     bool setComboCurrentData(QComboBox *combo, const QVariant &value) const;
     QString localCallsign() const;
     int selectedBandwidth() const;
@@ -111,6 +112,7 @@ private:
     QComboBox *catRtsCombo_ = nullptr;
     QComboBox *catDtrCombo_ = nullptr;
     QComboBox *catPttMethodCombo_ = nullptr;
+    QCheckBox *catAutoConnectCheck_ = nullptr;
     QPushButton *catConnectButton_ = nullptr;
     QPushButton *catReadFreqButton_ = nullptr;
     QLineEdit *catFrequencyEdit_ = nullptr;

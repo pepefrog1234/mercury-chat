@@ -82,6 +82,8 @@ MainWindow::MainWindow(QWidget *parent)
     wireSignals();
     setWindowTitle(QStringLiteral("Mercury Chat"));
     QTimer::singleShot(0, this, [this]() {
+        if (catAutoConnectCheck_->isChecked())
+            connectCat(false);
         if (autoStartModemCheck_->isChecked())
             startModem();
     });
@@ -278,6 +280,7 @@ void MainWindow::buildUi()
     catPttMethodCombo_->addItem(QStringLiteral("CAT"), static_cast<int>(CatPttMethod::Cat));
     catPttMethodCombo_->addItem(QStringLiteral("RTS"), static_cast<int>(CatPttMethod::SerialRts));
     catPttMethodCombo_->addItem(QStringLiteral("DTR"), static_cast<int>(CatPttMethod::SerialDtr));
+    catAutoConnectCheck_ = new QCheckBox(QStringLiteral("Reconnect on app launch"), catGroup);
     catConnectButton_ = new QPushButton(QStringLiteral("Connect CAT"), catGroup);
     catReadFreqButton_ = new QPushButton(QStringLiteral("Read"), catGroup);
     catFrequencyEdit_ = new QLineEdit(catGroup);
@@ -311,6 +314,7 @@ void MainWindow::buildUi()
     catLayout->addRow(QStringLiteral("RTS"), catRtsCombo_);
     catLayout->addRow(QStringLiteral("DTR"), catDtrCombo_);
     catLayout->addRow(QStringLiteral("PTT method"), catPttMethodCombo_);
+    catLayout->addRow(catAutoConnectCheck_);
     catLayout->addRow(catConnectRow);
     catLayout->addRow(QStringLiteral("Frequency"), catFrequencyRow);
 
@@ -411,6 +415,7 @@ void MainWindow::loadSettings()
     setComboCurrentData(catRtsCombo_, settings.value(QStringLiteral("cat/rts"), currentComboData(catRtsCombo_, 0)));
     setComboCurrentData(catDtrCombo_, settings.value(QStringLiteral("cat/dtr"), currentComboData(catDtrCombo_, 0)));
     setComboCurrentData(catPttMethodCombo_, settings.value(QStringLiteral("cat/pttMethod"), currentComboData(catPttMethodCombo_, 0)));
+    catAutoConnectCheck_->setChecked(settings.value(QStringLiteral("cat/autoConnect"), catAutoConnectCheck_->isChecked()).toBool());
     catFollowPttCheck_->setChecked(settings.value(QStringLiteral("cat/followModemPtt"), catFollowPttCheck_->isChecked()).toBool());
     catFrequencyEdit_->setText(settings.value(QStringLiteral("cat/frequencyHz"), catFrequencyEdit_->text()).toString());
 
@@ -447,6 +452,7 @@ void MainWindow::saveSettings() const
     settings.setValue(QStringLiteral("cat/rts"), currentComboData(catRtsCombo_, 0));
     settings.setValue(QStringLiteral("cat/dtr"), currentComboData(catDtrCombo_, 0));
     settings.setValue(QStringLiteral("cat/pttMethod"), currentComboData(catPttMethodCombo_, 0));
+    settings.setValue(QStringLiteral("cat/autoConnect"), catAutoConnectCheck_->isChecked());
     settings.setValue(QStringLiteral("cat/followModemPtt"), catFollowPttCheck_->isChecked());
     settings.setValue(QStringLiteral("cat/frequencyHz"), catFrequencyEdit_->text().trimmed());
     settings.sync();
@@ -543,6 +549,16 @@ void MainWindow::wireSignals()
     connect(catReadFreqButton_, &QPushButton::clicked, &cat_, &CatController::refreshFrequency);
     connect(catSetFreqButton_, &QPushButton::clicked, this, [this]() {
         cat_.setFrequencyHz(catFrequencyEdit_->text().trimmed().toLongLong());
+        saveSettings();
+    });
+    connect(catAutoConnectCheck_, &QCheckBox::toggled, this, [this]() {
+        saveSettings();
+    });
+    connect(catFollowPttCheck_, &QCheckBox::toggled, this, [this]() {
+        saveSettings();
+    });
+    connect(catFrequencyEdit_, &QLineEdit::editingFinished, this, [this]() {
+        saveSettings();
     });
     connect(catPttCheck_, &QCheckBox::toggled, &cat_, &CatController::setPtt);
     connect(&cat_, &CatController::connectedChanged, this, [this](bool connected) {
@@ -785,16 +801,25 @@ void MainWindow::connectOrDisconnectCat()
     if (cat_.isConnected())
     {
         cat_.disconnectRig();
+        saveSettings();
         return;
     }
 
+    connectCat(true);
+}
+
+bool MainWindow::connectCat(bool interactive)
+{
     bool ok = false;
     const int baud = catBaudCombo_->currentText().trimmed().toInt(&ok);
     const int modelId = catModelCombo_->currentData().toInt();
     if (modelId <= 0)
     {
-        QMessageBox::warning(this, QStringLiteral("Radio required"), QStringLiteral("Choose a valid hamlib radio model first."));
-        return;
+        if (interactive)
+            QMessageBox::warning(this, QStringLiteral("Radio required"), QStringLiteral("Choose a valid hamlib radio model first."));
+        else
+            appendSystemLine(QStringLiteral("CAT auto-connect skipped: choose a valid hamlib radio model first."));
+        return false;
     }
 
     cat_.connectRig(modelId,
@@ -804,6 +829,7 @@ void MainWindow::connectOrDisconnectCat()
                     static_cast<CatSerialLineState>(catDtrCombo_->currentData().toInt()),
                     static_cast<CatPttMethod>(catPttMethodCombo_->currentData().toInt()));
     saveSettings();
+    return cat_.isConnected();
 }
 
 void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
