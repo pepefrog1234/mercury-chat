@@ -1,0 +1,473 @@
+#include "MainWindow.hpp"
+
+#include "ChatProtocol.hpp"
+
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDateTime>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QHeaderView>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMessageBox>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QScrollBar>
+#include <QSignalBlocker>
+#include <QSpinBox>
+#include <QSplitter>
+#include <QStatusBar>
+#include <QTableWidget>
+#include <QTextEdit>
+#include <QTimer>
+#include <QVBoxLayout>
+
+namespace
+{
+QString bandwidthLabel(int bandwidthHz)
+{
+    return QStringLiteral("%1 Hz").arg(bandwidthHz);
+}
+
+QString utcTimeLabel()
+{
+    return QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
+}
+}
+
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent)
+{
+    buildUi();
+    wireSignals();
+    resize(1180, 760);
+    setWindowTitle(QStringLiteral("Mercury Chat"));
+}
+
+void MainWindow::buildUi()
+{
+    auto *central = new QWidget(this);
+    auto *outerLayout = new QVBoxLayout(central);
+    auto *splitter = new QSplitter(Qt::Horizontal, central);
+
+    auto *leftPanel = new QWidget(splitter);
+    auto *leftLayout = new QVBoxLayout(leftPanel);
+
+    auto *stationGroup = new QGroupBox(QStringLiteral("Station / TNC"), leftPanel);
+    auto *stationLayout = new QFormLayout(stationGroup);
+
+    callsignEdit_ = new QLineEdit(stationGroup);
+    callsignEdit_->setPlaceholderText(QStringLiteral("N0CALL"));
+    hostEdit_ = new QLineEdit(QStringLiteral("127.0.0.1"), stationGroup);
+
+    basePortSpin_ = new QSpinBox(stationGroup);
+    basePortSpin_->setRange(1, 65534);
+    basePortSpin_->setValue(8300);
+
+    bandwidthCombo_ = new QComboBox(stationGroup);
+    bandwidthCombo_->addItem(QStringLiteral("BW2300"), 2300);
+    bandwidthCombo_->addItem(QStringLiteral("BW500"), 500);
+    bandwidthCombo_->addItem(QStringLiteral("BW2750"), 2750);
+
+    tncConnectButton_ = new QPushButton(QStringLiteral("Connect TNC"), stationGroup);
+    stationInitButton_ = new QPushButton(QStringLiteral("Initialize"), stationGroup);
+    linkDisconnectButton_ = new QPushButton(QStringLiteral("Disconnect Link"), stationGroup);
+    stationInitButton_->setEnabled(false);
+    linkDisconnectButton_->setEnabled(false);
+
+    auto *stationButtonRow = new QWidget(stationGroup);
+    auto *stationButtonLayout = new QHBoxLayout(stationButtonRow);
+    stationButtonLayout->setContentsMargins(0, 0, 0, 0);
+    stationButtonLayout->addWidget(tncConnectButton_);
+    stationButtonLayout->addWidget(stationInitButton_);
+    stationButtonLayout->addWidget(linkDisconnectButton_);
+
+    stationLayout->addRow(QStringLiteral("Callsign"), callsignEdit_);
+    stationLayout->addRow(QStringLiteral("Mercury host"), hostEdit_);
+    stationLayout->addRow(QStringLiteral("ARQ base port"), basePortSpin_);
+    stationLayout->addRow(QStringLiteral("Bandwidth"), bandwidthCombo_);
+    stationLayout->addRow(stationButtonRow);
+
+    auto *statusGroup = new QGroupBox(QStringLiteral("Status"), leftPanel);
+    auto *statusLayout = new QFormLayout(statusGroup);
+    tncStatusLabel_ = new QLabel(QStringLiteral("Disconnected"), statusGroup);
+    linkStatusLabel_ = new QLabel(QStringLiteral("No ARQ link"), statusGroup);
+    pttStatusLabel_ = new QLabel(QStringLiteral("PTT off"), statusGroup);
+    bufferStatusLabel_ = new QLabel(QStringLiteral("0 bytes"), statusGroup);
+    snrStatusLabel_ = new QLabel(QStringLiteral("-"), statusGroup);
+    bitrateStatusLabel_ = new QLabel(QStringLiteral("-"), statusGroup);
+    statusLayout->addRow(QStringLiteral("TNC"), tncStatusLabel_);
+    statusLayout->addRow(QStringLiteral("Link"), linkStatusLabel_);
+    statusLayout->addRow(QStringLiteral("PTT"), pttStatusLabel_);
+    statusLayout->addRow(QStringLiteral("Buffer"), bufferStatusLabel_);
+    statusLayout->addRow(QStringLiteral("SNR"), snrStatusLabel_);
+    statusLayout->addRow(QStringLiteral("Bitrate"), bitrateStatusLabel_);
+
+    auto *beaconGroup = new QGroupBox(QStringLiteral("Beacons"), leftPanel);
+    auto *beaconLayout = new QVBoxLayout(beaconGroup);
+    auto *beaconControlRow = new QWidget(beaconGroup);
+    auto *beaconControlLayout = new QHBoxLayout(beaconControlRow);
+    beaconControlLayout->setContentsMargins(0, 0, 0, 0);
+    beaconSendButton_ = new QPushButton(QStringLiteral("Send Beacon"), beaconGroup);
+    autoBeaconCheck_ = new QCheckBox(QStringLiteral("Auto"), beaconGroup);
+    beaconSendButton_->setEnabled(false);
+    autoBeaconCheck_->setEnabled(false);
+    beaconIntervalSpin_ = new QSpinBox(beaconGroup);
+    beaconIntervalSpin_->setRange(30, 3600);
+    beaconIntervalSpin_->setValue(300);
+    beaconIntervalSpin_->setSuffix(QStringLiteral(" s"));
+    beaconControlLayout->addWidget(beaconSendButton_);
+    beaconControlLayout->addWidget(autoBeaconCheck_);
+    beaconControlLayout->addWidget(beaconIntervalSpin_);
+
+    beaconTable_ = new QTableWidget(0, 3, beaconGroup);
+    beaconTable_->setHorizontalHeaderLabels({QStringLiteral("Call"), QStringLiteral("BW"), QStringLiteral("Last heard")});
+    beaconTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    beaconTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    beaconTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    beaconTable_->horizontalHeader()->setStretchLastSection(true);
+    beaconTable_->verticalHeader()->setVisible(false);
+
+    connectBeaconButton_ = new QPushButton(QStringLiteral("Connect Selected"), beaconGroup);
+    connectBeaconButton_->setEnabled(false);
+    beaconLayout->addWidget(beaconControlRow);
+    beaconLayout->addWidget(beaconTable_);
+    beaconLayout->addWidget(connectBeaconButton_);
+
+    auto *catGroup = new QGroupBox(QStringLiteral("hamlib CAT"), leftPanel);
+    auto *catLayout = new QFormLayout(catGroup);
+    catModelSpin_ = new QSpinBox(catGroup);
+    catModelSpin_->setRange(1, 1000000);
+    catModelSpin_->setValue(2);
+    catModelSpin_->setToolTip(QStringLiteral("Use `mercury -K` or `rigctl -l` to find the model ID."));
+    catDeviceEdit_ = new QLineEdit(catGroup);
+    catDeviceEdit_->setPlaceholderText(QStringLiteral("/dev/ttyUSB0, COM3, or 127.0.0.1:4532"));
+    catBaudCombo_ = new QComboBox(catGroup);
+    catBaudCombo_->setEditable(true);
+    for (const int baud : {0, 4800, 9600, 19200, 38400, 57600, 115200})
+        catBaudCombo_->addItem(QString::number(baud), baud);
+    catConnectButton_ = new QPushButton(QStringLiteral("Connect CAT"), catGroup);
+    catReadFreqButton_ = new QPushButton(QStringLiteral("Read"), catGroup);
+    catFrequencyEdit_ = new QLineEdit(catGroup);
+    catFrequencyEdit_->setPlaceholderText(QStringLiteral("Frequency in Hz"));
+    catSetFreqButton_ = new QPushButton(QStringLiteral("Set"), catGroup);
+    catPttCheck_ = new QCheckBox(QStringLiteral("PTT"), catGroup);
+    catReadFreqButton_->setEnabled(false);
+    catSetFreqButton_->setEnabled(false);
+    catPttCheck_->setEnabled(false);
+
+    auto *catConnectRow = new QWidget(catGroup);
+    auto *catConnectLayout = new QHBoxLayout(catConnectRow);
+    catConnectLayout->setContentsMargins(0, 0, 0, 0);
+    catConnectLayout->addWidget(catConnectButton_);
+    catConnectLayout->addWidget(catPttCheck_);
+
+    auto *catFrequencyRow = new QWidget(catGroup);
+    auto *catFrequencyLayout = new QHBoxLayout(catFrequencyRow);
+    catFrequencyLayout->setContentsMargins(0, 0, 0, 0);
+    catFrequencyLayout->addWidget(catFrequencyEdit_);
+    catFrequencyLayout->addWidget(catReadFreqButton_);
+    catFrequencyLayout->addWidget(catSetFreqButton_);
+
+    catLayout->addRow(QStringLiteral("Model ID"), catModelSpin_);
+    catLayout->addRow(QStringLiteral("Device"), catDeviceEdit_);
+    catLayout->addRow(QStringLiteral("Serial baud"), catBaudCombo_);
+    catLayout->addRow(catConnectRow);
+    catLayout->addRow(QStringLiteral("Frequency"), catFrequencyRow);
+
+    leftLayout->addWidget(stationGroup);
+    leftLayout->addWidget(statusGroup);
+    leftLayout->addWidget(beaconGroup, 1);
+    leftLayout->addWidget(catGroup);
+
+    auto *chatPanel = new QWidget(splitter);
+    auto *chatLayout = new QVBoxLayout(chatPanel);
+    transcript_ = new QTextEdit(chatPanel);
+    transcript_->setReadOnly(true);
+    transcript_->setAcceptRichText(false);
+    messageEdit_ = new QPlainTextEdit(chatPanel);
+    messageEdit_->setPlaceholderText(QStringLiteral("Type UTF-8 text here"));
+    messageEdit_->setFixedHeight(96);
+    sendButton_ = new QPushButton(QStringLiteral("Send"), chatPanel);
+    sendButton_->setEnabled(false);
+
+    chatLayout->addWidget(transcript_, 1);
+    chatLayout->addWidget(messageEdit_);
+    chatLayout->addWidget(sendButton_);
+
+    splitter->addWidget(leftPanel);
+    splitter->addWidget(chatPanel);
+    splitter->setStretchFactor(0, 0);
+    splitter->setStretchFactor(1, 1);
+    splitter->setSizes({420, 760});
+
+    outerLayout->addWidget(splitter);
+    setCentralWidget(central);
+    statusBar()->showMessage(QStringLiteral("Start Mercury, connect the TNC, then initialize your station."));
+
+    beaconTimer_ = new QTimer(this);
+}
+
+void MainWindow::wireSignals()
+{
+    connect(tncConnectButton_, &QPushButton::clicked, this, &MainWindow::connectTnc);
+    connect(stationInitButton_, &QPushButton::clicked, this, &MainWindow::initializeStation);
+    connect(linkDisconnectButton_, &QPushButton::clicked, &tnc_, &TncClient::disconnectLink);
+    connect(beaconSendButton_, &QPushButton::clicked, this, &MainWindow::sendBeacon);
+    connect(connectBeaconButton_, &QPushButton::clicked, this, &MainWindow::connectSelectedBeacon);
+    connect(beaconTable_, &QTableWidget::cellDoubleClicked, this, [this](int, int) {
+        connectSelectedBeacon();
+    });
+    connect(sendButton_, &QPushButton::clicked, this, &MainWindow::sendChatMessage);
+    connect(autoBeaconCheck_, &QCheckBox::toggled, this, [this](bool enabled) {
+        if (enabled)
+        {
+            sendBeacon();
+            beaconTimer_->start(beaconIntervalSpin_->value() * 1000);
+        }
+        else
+        {
+            beaconTimer_->stop();
+        }
+    });
+    connect(beaconIntervalSpin_, &QSpinBox::valueChanged, this, [this](int value) {
+        if (autoBeaconCheck_->isChecked())
+            beaconTimer_->start(value * 1000);
+    });
+    connect(beaconTimer_, &QTimer::timeout, this, &MainWindow::sendBeacon);
+
+    connect(&tnc_, &TncClient::connectionStateChanged, this, &MainWindow::updateTncState);
+    connect(&tnc_, &TncClient::statusMessage, this, [this](const QString &message) {
+        statusBar()->showMessage(message, 5000);
+    });
+    connect(&tnc_, &TncClient::controlLineReceived, this, [this](const QString &line) {
+        appendSystemLine(QStringLiteral("TNC: %1").arg(line));
+    });
+    connect(&tnc_, &TncClient::cqFrameReceived, this, &MainWindow::onBeaconReceived);
+    connect(&tnc_, &TncClient::linkConnected, this, &MainWindow::onLinkConnected);
+    connect(&tnc_, &TncClient::linkDisconnected, this, &MainWindow::onLinkDisconnected);
+    connect(&tnc_, &TncClient::pendingChanged, this, [this](bool pending) {
+        linkStatusLabel_->setText(pending ? QStringLiteral("Pending") : QStringLiteral("Idle"));
+    });
+    connect(&tnc_, &TncClient::pttChanged, this, [this](bool enabled) {
+        pttStatusLabel_->setText(enabled ? QStringLiteral("PTT on") : QStringLiteral("PTT off"));
+    });
+    connect(&tnc_, &TncClient::bufferUpdated, this, [this](int bytes) {
+        bufferStatusLabel_->setText(QStringLiteral("%1 bytes").arg(bytes));
+    });
+    connect(&tnc_, &TncClient::snrUpdated, this, [this](double snr) {
+        snrStatusLabel_->setText(QStringLiteral("%1 dB").arg(snr, 0, 'f', 1));
+    });
+    connect(&tnc_, &TncClient::bitrateUpdated, this, [this](int level, int bps) {
+        bitrateStatusLabel_->setText(QStringLiteral("L%1 %2 bps").arg(level).arg(bps));
+    });
+    connect(&tnc_, &TncClient::dataReceived, this, &MainWindow::onDataReceived);
+
+    connect(catConnectButton_, &QPushButton::clicked, this, &MainWindow::connectOrDisconnectCat);
+    connect(catReadFreqButton_, &QPushButton::clicked, &cat_, &CatController::refreshFrequency);
+    connect(catSetFreqButton_, &QPushButton::clicked, this, [this]() {
+        cat_.setFrequencyHz(catFrequencyEdit_->text().trimmed().toLongLong());
+    });
+    connect(catPttCheck_, &QCheckBox::toggled, &cat_, &CatController::setPtt);
+    connect(&cat_, &CatController::connectedChanged, this, [this](bool connected) {
+        catConnectButton_->setText(connected ? QStringLiteral("Disconnect CAT") : QStringLiteral("Connect CAT"));
+        catReadFreqButton_->setEnabled(connected);
+        catSetFreqButton_->setEnabled(connected);
+        catPttCheck_->setEnabled(connected);
+        if (!connected)
+        {
+            const QSignalBlocker blocker(catPttCheck_);
+            catPttCheck_->setChecked(false);
+        }
+    });
+    connect(&cat_, &CatController::statusMessage, this, [this](const QString &message) {
+        statusBar()->showMessage(message, 5000);
+        appendSystemLine(message);
+    });
+    connect(&cat_, &CatController::frequencyChanged, this, [this](qint64 frequencyHz) {
+        catFrequencyEdit_->setText(QString::number(frequencyHz));
+    });
+    connect(&cat_, &CatController::pttChanged, this, [this](bool enabled) {
+        catPttCheck_->setChecked(enabled);
+    });
+}
+
+void MainWindow::connectTnc()
+{
+    if (tnc_.isControlConnected() || tnc_.isDataConnected())
+    {
+        tnc_.disconnectFromModem();
+        return;
+    }
+
+    tnc_.connectToModem(hostEdit_->text().trimmed(), static_cast<quint16>(basePortSpin_->value()));
+}
+
+void MainWindow::initializeStation()
+{
+    const QString callsign = localCallsign();
+    if (callsign.isEmpty())
+    {
+        QMessageBox::warning(this, QStringLiteral("Callsign required"), QStringLiteral("Set a valid local callsign first."));
+        return;
+    }
+
+    tnc_.initializeStation(callsign, selectedBandwidth());
+    appendSystemLine(QStringLiteral("Initialized %1 at %2").arg(callsign, bandwidthLabel(selectedBandwidth())));
+}
+
+void MainWindow::sendBeacon()
+{
+    const QString callsign = localCallsign();
+    if (callsign.isEmpty())
+    {
+        autoBeaconCheck_->setChecked(false);
+        QMessageBox::warning(this, QStringLiteral("Callsign required"), QStringLiteral("Set a valid local callsign before sending a beacon."));
+        return;
+    }
+
+    tnc_.sendCqFrame(callsign, selectedBandwidth());
+    appendSystemLine(QStringLiteral("Beacon sent as %1 %2").arg(callsign, bandwidthLabel(selectedBandwidth())));
+}
+
+void MainWindow::connectSelectedBeacon()
+{
+    const QList<QTableWidgetItem *> selected = beaconTable_->selectedItems();
+    if (selected.isEmpty())
+        return;
+
+    const int row = selected.first()->row();
+    const QString target = beaconTable_->item(row, 0)->text();
+    const QString callsign = localCallsign();
+    if (callsign.isEmpty())
+    {
+        QMessageBox::warning(this, QStringLiteral("Callsign required"), QStringLiteral("Set a valid local callsign before connecting."));
+        return;
+    }
+
+    tnc_.connectPeer(callsign, target);
+    appendSystemLine(QStringLiteral("Connecting %1 -> %2").arg(callsign, target));
+}
+
+void MainWindow::sendChatMessage()
+{
+    const QString text = messageEdit_->toPlainText();
+    if (text.trimmed().isEmpty())
+        return;
+
+    const QString callsign = localCallsign();
+    tnc_.sendPayload(ChatProtocol::encodeTextMessage(callsign, text));
+    appendTranscript(callsign, text);
+    messageEdit_->clear();
+}
+
+void MainWindow::onBeaconReceived(const QString &callsign, int bandwidthHz)
+{
+    if (callsign.isEmpty() || callsign == localCallsign())
+        return;
+
+    updateBeaconRow(callsign, bandwidthHz);
+    appendSystemLine(QStringLiteral("Beacon heard from %1 %2").arg(callsign, bandwidthLabel(bandwidthHz)));
+}
+
+void MainWindow::onLinkConnected(const QString &source, const QString &destination, int bandwidthHz)
+{
+    arqConnected_ = true;
+    const QString local = localCallsign();
+    peerCallsign_ = (source == local) ? destination : source;
+    linkStatusLabel_->setText(QStringLiteral("Connected to %1 (%2)").arg(peerCallsign_, bandwidthLabel(bandwidthHz)));
+    linkDisconnectButton_->setEnabled(true);
+    sendButton_->setEnabled(true);
+    appendSystemLine(QStringLiteral("ARQ connected: %1 -> %2, %3").arg(source, destination, bandwidthLabel(bandwidthHz)));
+}
+
+void MainWindow::onLinkDisconnected()
+{
+    arqConnected_ = false;
+    peerCallsign_.clear();
+    linkStatusLabel_->setText(QStringLiteral("No ARQ link"));
+    linkDisconnectButton_->setEnabled(false);
+    sendButton_->setEnabled(false);
+    appendSystemLine(QStringLiteral("ARQ disconnected"));
+}
+
+void MainWindow::onDataReceived(const QByteArray &bytes)
+{
+    const QList<ChatMessage> messages = ChatProtocol::appendAndDecode(chatRxBuffer_, bytes);
+    for (const ChatMessage &message : messages)
+    {
+        const QString speaker = message.from.isEmpty() ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_) : message.from;
+        appendTranscript(speaker, message.text);
+    }
+}
+
+void MainWindow::connectOrDisconnectCat()
+{
+    if (cat_.isConnected())
+    {
+        cat_.disconnectRig();
+        return;
+    }
+
+    bool ok = false;
+    const int baud = catBaudCombo_->currentText().trimmed().toInt(&ok);
+    cat_.connectRig(catModelSpin_->value(), catDeviceEdit_->text(), ok ? baud : 0);
+}
+
+void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
+{
+    tncConnectButton_->setText((controlConnected || dataConnected) ? QStringLiteral("Disconnect TNC") : QStringLiteral("Connect TNC"));
+    stationInitButton_->setEnabled(controlConnected);
+    beaconSendButton_->setEnabled(controlConnected);
+    connectBeaconButton_->setEnabled(controlConnected);
+    autoBeaconCheck_->setEnabled(controlConnected);
+    if (!controlConnected)
+        autoBeaconCheck_->setChecked(false);
+    tncStatusLabel_->setText(QStringLiteral("Control %1, data %2")
+                                 .arg(controlConnected ? QStringLiteral("on") : QStringLiteral("off"),
+                                      dataConnected ? QStringLiteral("on") : QStringLiteral("off")));
+}
+
+void MainWindow::appendTranscript(const QString &speaker, const QString &text)
+{
+    transcript_->moveCursor(QTextCursor::End);
+    transcript_->insertPlainText(QStringLiteral("[%1] %2: %3\n").arg(utcTimeLabel(), speaker, text));
+    transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
+}
+
+void MainWindow::appendSystemLine(const QString &text)
+{
+    transcript_->moveCursor(QTextCursor::End);
+    transcript_->insertPlainText(QStringLiteral("[%1] * %2\n").arg(utcTimeLabel(), text));
+    transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
+}
+
+void MainWindow::updateBeaconRow(const QString &callsign, int bandwidthHz)
+{
+    for (int row = 0; row < beaconTable_->rowCount(); ++row)
+    {
+        if (beaconTable_->item(row, 0)->text() == callsign)
+        {
+            beaconTable_->item(row, 1)->setText(QString::number(bandwidthHz));
+            beaconTable_->item(row, 2)->setText(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")));
+            return;
+        }
+    }
+
+    const int row = beaconTable_->rowCount();
+    beaconTable_->insertRow(row);
+    beaconTable_->setItem(row, 0, new QTableWidgetItem(callsign));
+    beaconTable_->setItem(row, 1, new QTableWidgetItem(QString::number(bandwidthHz)));
+    beaconTable_->setItem(row, 2, new QTableWidgetItem(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"))));
+}
+
+QString MainWindow::localCallsign() const
+{
+    return ChatProtocol::normalizeCallsign(callsignEdit_->text());
+}
+
+int MainWindow::selectedBandwidth() const
+{
+    return bandwidthCombo_->currentData().toInt();
+}

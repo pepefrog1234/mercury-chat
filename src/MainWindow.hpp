@@ -1,0 +1,89 @@
+#pragma once
+
+#include "CatController.hpp"
+#include "TncClient.hpp"
+
+#include <QByteArray>
+#include <QMainWindow>
+
+class QCheckBox;
+class QComboBox;
+class QLabel;
+class QLineEdit;
+class QPlainTextEdit;
+class QPushButton;
+class QSpinBox;
+class QTableWidget;
+class QTextEdit;
+class QTimer;
+
+class MainWindow : public QMainWindow
+{
+    Q_OBJECT
+
+public:
+    explicit MainWindow(QWidget *parent = nullptr);
+
+private slots:
+    void connectTnc();
+    void initializeStation();
+    void sendBeacon();
+    void connectSelectedBeacon();
+    void sendChatMessage();
+    void onBeaconReceived(const QString &callsign, int bandwidthHz);
+    void onLinkConnected(const QString &source, const QString &destination, int bandwidthHz);
+    void onLinkDisconnected();
+    void onDataReceived(const QByteArray &bytes);
+    void connectOrDisconnectCat();
+    void updateTncState(bool controlConnected, bool dataConnected);
+
+private:
+    void buildUi();
+    void wireSignals();
+    void appendTranscript(const QString &speaker, const QString &text);
+    void appendSystemLine(const QString &text);
+    void updateBeaconRow(const QString &callsign, int bandwidthHz);
+    QString localCallsign() const;
+    int selectedBandwidth() const;
+
+    TncClient tnc_;
+    CatController cat_;
+    QByteArray chatRxBuffer_;
+    QString peerCallsign_;
+    bool arqConnected_ = false;
+
+    QLineEdit *hostEdit_ = nullptr;
+    QSpinBox *basePortSpin_ = nullptr;
+    QLineEdit *callsignEdit_ = nullptr;
+    QComboBox *bandwidthCombo_ = nullptr;
+    QPushButton *tncConnectButton_ = nullptr;
+    QPushButton *stationInitButton_ = nullptr;
+    QPushButton *linkDisconnectButton_ = nullptr;
+    QLabel *tncStatusLabel_ = nullptr;
+    QLabel *linkStatusLabel_ = nullptr;
+    QLabel *pttStatusLabel_ = nullptr;
+    QLabel *bufferStatusLabel_ = nullptr;
+    QLabel *snrStatusLabel_ = nullptr;
+    QLabel *bitrateStatusLabel_ = nullptr;
+
+    QPushButton *beaconSendButton_ = nullptr;
+    QCheckBox *autoBeaconCheck_ = nullptr;
+    QSpinBox *beaconIntervalSpin_ = nullptr;
+    QTableWidget *beaconTable_ = nullptr;
+    QPushButton *connectBeaconButton_ = nullptr;
+    QTimer *beaconTimer_ = nullptr;
+
+    QTextEdit *transcript_ = nullptr;
+    QPlainTextEdit *messageEdit_ = nullptr;
+    QPushButton *sendButton_ = nullptr;
+
+    QSpinBox *catModelSpin_ = nullptr;
+    QLineEdit *catDeviceEdit_ = nullptr;
+    QComboBox *catBaudCombo_ = nullptr;
+    QPushButton *catConnectButton_ = nullptr;
+    QPushButton *catReadFreqButton_ = nullptr;
+    QLineEdit *catFrequencyEdit_ = nullptr;
+    QPushButton *catSetFreqButton_ = nullptr;
+    QCheckBox *catPttCheck_ = nullptr;
+};
+
