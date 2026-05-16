@@ -3,6 +3,7 @@
 #include "ChatProtocol.hpp"
 
 #include <QCheckBox>
+#include <QCompleter>
 #include <QComboBox>
 #include <QDateTime>
 #include <QFormLayout>
@@ -168,16 +169,43 @@ void MainWindow::buildUi()
 
     auto *catGroup = new QGroupBox(QStringLiteral("hamlib CAT"), leftPanel);
     auto *catLayout = new QFormLayout(catGroup);
-    catModelSpin_ = new QSpinBox(catGroup);
-    catModelSpin_->setRange(1, 1000000);
-    catModelSpin_->setValue(2);
-    catModelSpin_->setToolTip(QStringLiteral("Use `mercury -K` or `rigctl -l` to find the model ID."));
+    catModelCombo_ = new QComboBox(catGroup);
+    catModelCombo_->setEditable(true);
+    catModelCombo_->setInsertPolicy(QComboBox::NoInsert);
+    catModelCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    catModelCombo_->setMinimumContentsLength(24);
+    if (catModelCombo_->completer())
+        catModelCombo_->completer()->setCompletionMode(QCompleter::PopupCompletion);
+    for (const CatRigModel &model : CatController::availableRigModels())
+    {
+        catModelCombo_->addItem(model.name, model.modelId);
+        catModelCombo_->setItemData(catModelCombo_->count() - 1,
+                                    QStringLiteral("Hamlib model ID: %1").arg(model.modelId),
+                                    Qt::ToolTipRole);
+    }
+    if (catModelCombo_->count() == 0)
+        catModelCombo_->addItem(QStringLiteral("hamlib unavailable"), 0);
+    const int dummyIndex = catModelCombo_->findText(QStringLiteral("Hamlib Dummy"), Qt::MatchContains);
+    if (dummyIndex >= 0)
+        catModelCombo_->setCurrentIndex(dummyIndex);
     catDeviceEdit_ = new QLineEdit(catGroup);
     catDeviceEdit_->setPlaceholderText(QStringLiteral("/dev/ttyUSB0, COM3, or 127.0.0.1:4532"));
     catBaudCombo_ = new QComboBox(catGroup);
     catBaudCombo_->setEditable(true);
     for (const int baud : {0, 4800, 9600, 19200, 38400, 57600, 115200})
         catBaudCombo_->addItem(QString::number(baud), baud);
+    catRtsCombo_ = new QComboBox(catGroup);
+    catRtsCombo_->addItem(QStringLiteral("Unset"), static_cast<int>(CatSerialLineState::Unset));
+    catRtsCombo_->addItem(QStringLiteral("On"), static_cast<int>(CatSerialLineState::On));
+    catRtsCombo_->addItem(QStringLiteral("Off"), static_cast<int>(CatSerialLineState::Off));
+    catDtrCombo_ = new QComboBox(catGroup);
+    catDtrCombo_->addItem(QStringLiteral("Unset"), static_cast<int>(CatSerialLineState::Unset));
+    catDtrCombo_->addItem(QStringLiteral("On"), static_cast<int>(CatSerialLineState::On));
+    catDtrCombo_->addItem(QStringLiteral("Off"), static_cast<int>(CatSerialLineState::Off));
+    catPttMethodCombo_ = new QComboBox(catGroup);
+    catPttMethodCombo_->addItem(QStringLiteral("CAT"), static_cast<int>(CatPttMethod::Cat));
+    catPttMethodCombo_->addItem(QStringLiteral("RTS"), static_cast<int>(CatPttMethod::SerialRts));
+    catPttMethodCombo_->addItem(QStringLiteral("DTR"), static_cast<int>(CatPttMethod::SerialDtr));
     catConnectButton_ = new QPushButton(QStringLiteral("Connect CAT"), catGroup);
     catReadFreqButton_ = new QPushButton(QStringLiteral("Read"), catGroup);
     catFrequencyEdit_ = new QLineEdit(catGroup);
@@ -205,9 +233,12 @@ void MainWindow::buildUi()
     catFrequencyLayout->addWidget(catReadFreqButton_);
     catFrequencyLayout->addWidget(catSetFreqButton_);
 
-    catLayout->addRow(QStringLiteral("Model ID"), catModelSpin_);
-    catLayout->addRow(QStringLiteral("Device"), catDeviceEdit_);
+    catLayout->addRow(QStringLiteral("Radio"), catModelCombo_);
+    catLayout->addRow(QStringLiteral("CAT port"), catDeviceEdit_);
     catLayout->addRow(QStringLiteral("Serial baud"), catBaudCombo_);
+    catLayout->addRow(QStringLiteral("RTS"), catRtsCombo_);
+    catLayout->addRow(QStringLiteral("DTR"), catDtrCombo_);
+    catLayout->addRow(QStringLiteral("PTT method"), catPttMethodCombo_);
     catLayout->addRow(catConnectRow);
     catLayout->addRow(QStringLiteral("Frequency"), catFrequencyRow);
 
@@ -335,6 +366,12 @@ void MainWindow::wireSignals()
     connect(catPttCheck_, &QCheckBox::toggled, &cat_, &CatController::setPtt);
     connect(&cat_, &CatController::connectedChanged, this, [this](bool connected) {
         catConnectButton_->setText(connected ? QStringLiteral("Disconnect CAT") : QStringLiteral("Connect CAT"));
+        catModelCombo_->setEnabled(!connected);
+        catDeviceEdit_->setEnabled(!connected);
+        catBaudCombo_->setEnabled(!connected);
+        catRtsCombo_->setEnabled(!connected);
+        catDtrCombo_->setEnabled(!connected);
+        catPttMethodCombo_->setEnabled(!connected);
         catReadFreqButton_->setEnabled(connected);
         catSetFreqButton_->setEnabled(connected);
         catPttCheck_->setEnabled(connected);
@@ -493,7 +530,19 @@ void MainWindow::connectOrDisconnectCat()
 
     bool ok = false;
     const int baud = catBaudCombo_->currentText().trimmed().toInt(&ok);
-    cat_.connectRig(catModelSpin_->value(), catDeviceEdit_->text(), ok ? baud : 0);
+    const int modelId = catModelCombo_->currentData().toInt();
+    if (modelId <= 0)
+    {
+        QMessageBox::warning(this, QStringLiteral("Radio required"), QStringLiteral("Choose a valid hamlib radio model first."));
+        return;
+    }
+
+    cat_.connectRig(modelId,
+                    catDeviceEdit_->text(),
+                    ok ? baud : 0,
+                    static_cast<CatSerialLineState>(catRtsCombo_->currentData().toInt()),
+                    static_cast<CatSerialLineState>(catDtrCombo_->currentData().toInt()),
+                    static_cast<CatPttMethod>(catPttMethodCombo_->currentData().toInt()));
 }
 
 void MainWindow::updateTncState(bool controlConnected, bool dataConnected)

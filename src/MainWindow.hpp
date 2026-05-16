@@ -89,9 +89,12 @@ private:
     QPlainTextEdit *messageEdit_ = nullptr;
     QPushButton *sendButton_ = nullptr;
 
-    QSpinBox *catModelSpin_ = nullptr;
+    QComboBox *catModelCombo_ = nullptr;
     QLineEdit *catDeviceEdit_ = nullptr;
     QComboBox *catBaudCombo_ = nullptr;
+    QComboBox *catRtsCombo_ = nullptr;
+    QComboBox *catDtrCombo_ = nullptr;
+    QComboBox *catPttMethodCombo_ = nullptr;
     QPushButton *catConnectButton_ = nullptr;
     QPushButton *catReadFreqButton_ = nullptr;
     QLineEdit *catFrequencyEdit_ = nullptr;

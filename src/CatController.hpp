@@ -1,11 +1,32 @@
 #pragma once
 
+#include <QList>
 #include <QObject>
 #include <QString>
 
 #if MERCURYCHAT_WITH_HAMLIB
 #include <hamlib/rig.h>
 #endif
+
+struct CatRigModel
+{
+    int modelId = 0;
+    QString name;
+};
+
+enum class CatSerialLineState
+{
+    Unset = 0,
+    On = 1,
+    Off = 2
+};
+
+enum class CatPttMethod
+{
+    Cat = 0,
+    SerialRts = 1,
+    SerialDtr = 2
+};
 
 class CatController : public QObject
 {
@@ -15,10 +36,17 @@ public:
     explicit CatController(QObject *parent = nullptr);
     ~CatController() override;
 
+    static QList<CatRigModel> availableRigModels();
     bool isConnected() const;
 
 public slots:
-    void connectRig(int modelId, const QString &devicePath, int serialSpeed, int debugLevel = 0);
+    void connectRig(int modelId,
+                    const QString &devicePath,
+                    int serialSpeed,
+                    CatSerialLineState rtsState = CatSerialLineState::Unset,
+                    CatSerialLineState dtrState = CatSerialLineState::Unset,
+                    CatPttMethod pttMethod = CatPttMethod::Cat,
+                    int debugLevel = 0);
     void disconnectRig();
     void refreshFrequency();
     void setFrequencyHz(qint64 frequencyHz);
@@ -36,4 +64,3 @@ private:
 #endif
     bool connected_ = false;
 };
-

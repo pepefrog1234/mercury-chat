@@ -78,6 +78,8 @@ Extra modem arguments can be added in the Mercury Modem panel. For example, if y
 
 The default architecture is the opposite: Mercury runs without `-R/-A`, and Mercury Chat handles PTT through its hamlib CAT panel by following TNC `PTT ON` / `PTT OFF` events. Avoid enabling CAT/PTT in both Mercury and Mercury Chat at the same time.
 
+The hamlib CAT panel lists radios by manufacturer/model name and stores the numeric hamlib model ID internally. RTS and DTR can be left unset or forced on/off before opening the CAT port. The PTT method can use normal CAT PTT, RTS, or DTR depending on the operator's interface.
+
 Then launch:
 
 ```sh

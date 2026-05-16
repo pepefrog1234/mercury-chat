@@ -3,7 +3,41 @@
 #include <QByteArray>
 
 #if MERCURYCHAT_WITH_HAMLIB
+#include <algorithm>
 #include <cstdio>
+#endif
+
+#if MERCURYCHAT_WITH_HAMLIB
+namespace
+{
+QString rigDisplayName(const struct rig_caps *caps)
+{
+    const QString manufacturer = QString::fromLocal8Bit(caps->mfg_name ? caps->mfg_name : "").trimmed();
+    const QString model = QString::fromLocal8Bit(caps->model_name ? caps->model_name : "").trimmed();
+    if (manufacturer.isEmpty())
+        return model;
+    if (model.isEmpty() || model.compare(manufacturer, Qt::CaseInsensitive) == 0)
+        return manufacturer;
+    return QStringLiteral("%1 %2").arg(manufacturer, model);
+}
+
+int collectRigModel(const struct rig_caps *caps, rig_ptr_t data)
+{
+    if (!caps || !data)
+        return 1;
+
+    auto *models = static_cast<QList<CatRigModel> *>(data);
+    const QString name = rigDisplayName(caps);
+    if (!name.isEmpty())
+        models->append({static_cast<int>(caps->rig_model), name});
+    return 1;
+}
+
+enum serial_control_state_e toHamlibSerialState(CatSerialLineState state)
+{
+    return static_cast<enum serial_control_state_e>(static_cast<int>(state));
+}
+}
 #endif
 
 CatController::CatController(QObject *parent)
@@ -21,7 +55,29 @@ bool CatController::isConnected() const
     return connected_;
 }
 
-void CatController::connectRig(int modelId, const QString &devicePath, int serialSpeed, int debugLevel)
+QList<CatRigModel> CatController::availableRigModels()
+{
+    QList<CatRigModel> models;
+
+#if MERCURYCHAT_WITH_HAMLIB
+    rig_set_debug(RIG_DEBUG_NONE);
+    rig_load_all_backends();
+    rig_list_foreach(collectRigModel, &models);
+    std::sort(models.begin(), models.end(), [](const CatRigModel &left, const CatRigModel &right) {
+        return QString::localeAwareCompare(left.name, right.name) < 0;
+    });
+#endif
+
+    return models;
+}
+
+void CatController::connectRig(int modelId,
+                               const QString &devicePath,
+                               int serialSpeed,
+                               CatSerialLineState rtsState,
+                               CatSerialLineState dtrState,
+                               CatPttMethod pttMethod,
+                               int debugLevel)
 {
 #if MERCURYCHAT_WITH_HAMLIB
     disconnectRig();
@@ -37,10 +93,34 @@ void CatController::connectRig(int modelId, const QString &devicePath, int seria
 
     const QByteArray deviceBytes = devicePath.trimmed().toLocal8Bit();
     if (!deviceBytes.isEmpty())
+    {
         std::snprintf(rig_->state.rigport.pathname, HAMLIB_FILPATHLEN, "%s", deviceBytes.constData());
+        std::snprintf(rig_->state.pttport.pathname, HAMLIB_FILPATHLEN, "%s", deviceBytes.constData());
+    }
 
     if (serialSpeed > 0)
+    {
         rig_->state.rigport.parm.serial.rate = serialSpeed;
+        rig_->state.pttport.parm.serial.rate = serialSpeed;
+    }
+
+    rig_->state.rigport.parm.serial.rts_state = toHamlibSerialState(rtsState);
+    rig_->state.rigport.parm.serial.dtr_state = toHamlibSerialState(dtrState);
+    rig_->state.pttport.parm.serial.rts_state = toHamlibSerialState(rtsState);
+    rig_->state.pttport.parm.serial.dtr_state = toHamlibSerialState(dtrState);
+
+    switch (pttMethod)
+    {
+    case CatPttMethod::SerialRts:
+        rig_->state.pttport.type.ptt = RIG_PTT_SERIAL_RTS;
+        break;
+    case CatPttMethod::SerialDtr:
+        rig_->state.pttport.type.ptt = RIG_PTT_SERIAL_DTR;
+        break;
+    case CatPttMethod::Cat:
+        rig_->state.pttport.type.ptt = RIG_PTT_RIG;
+        break;
+    }
 
     const int rc = rig_open(rig_);
     if (rc != RIG_OK)
@@ -54,12 +134,15 @@ void CatController::connectRig(int modelId, const QString &devicePath, int seria
 
     connected_ = true;
     emit connectedChanged(true);
-    emit statusMessage(QStringLiteral("hamlib CAT connected to model %1").arg(modelId));
+    emit statusMessage(QStringLiteral("hamlib CAT connected to %1").arg(rigDisplayName(rig_->caps)));
     refreshFrequency();
 #else
     Q_UNUSED(modelId)
     Q_UNUSED(devicePath)
     Q_UNUSED(serialSpeed)
+    Q_UNUSED(rtsState)
+    Q_UNUSED(dtrState)
+    Q_UNUSED(pttMethod)
     Q_UNUSED(debugLevel)
     emit statusMessage(QStringLiteral("This build was configured without hamlib CAT support"));
     emit connectedChanged(false);
@@ -154,4 +237,3 @@ void CatController::setPtt(bool enabled)
     emit statusMessage(QStringLiteral("This build was configured without hamlib CAT support"));
 #endif
 }
-
