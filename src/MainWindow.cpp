@@ -639,18 +639,32 @@ void MainWindow::retryTncConnection()
     tnc_.connectToModem(hostEdit_->text().trimmed(), static_cast<quint16>(basePortSpin_->value()));
 }
 
-void MainWindow::initializeStation()
+bool MainWindow::applyStationSettings(bool warnIfMissing)
 {
     const QString callsign = localCallsign();
     if (callsign.isEmpty())
     {
-        QMessageBox::warning(this, QStringLiteral("Callsign required"), QStringLiteral("Set a valid local callsign first."));
-        return;
+        if (warnIfMissing)
+            QMessageBox::warning(this, QStringLiteral("Callsign required"), QStringLiteral("Set a valid local callsign first."));
+        return false;
+    }
+
+    if (!tnc_.isControlConnected())
+    {
+        if (warnIfMissing)
+            appendSystemLine(QStringLiteral("Station settings not applied: TNC control port is not connected."));
+        return false;
     }
 
     tnc_.initializeStation(callsign, selectedBandwidth());
     saveSettings();
-    appendSystemLine(QStringLiteral("Initialized %1 at %2").arg(callsign, bandwidthLabel(selectedBandwidth())));
+    return true;
+}
+
+void MainWindow::initializeStation()
+{
+    if (applyStationSettings(true))
+        appendSystemLine(QStringLiteral("Initialized %1 at %2").arg(localCallsign(), bandwidthLabel(selectedBandwidth())));
 }
 
 void MainWindow::sendBeacon()
@@ -674,6 +688,9 @@ void MainWindow::sendBeacon()
         return;
     }
 
+    if (!applyStationSettings(false))
+        return;
+
     tnc_.sendCqFrame(callsign, selectedBandwidth());
     appendSystemLine(QStringLiteral("Beacon sent as %1 %2").arg(callsign, bandwidthLabel(selectedBandwidth())));
 }
@@ -692,6 +709,20 @@ void MainWindow::connectSelectedBeacon()
         QMessageBox::warning(this, QStringLiteral("Callsign required"), QStringLiteral("Set a valid local callsign before connecting."));
         return;
     }
+
+    if (!tnc_.isControlConnected())
+    {
+        appendSystemLine(QStringLiteral("Connect not started: TNC control port is not connected."));
+        if (modem_.isRunning())
+        {
+            tncRetryAttempts_ = 0;
+            tncRetryTimer_->start();
+        }
+        return;
+    }
+
+    if (!applyStationSettings(false))
+        return;
 
     tnc_.connectPeer(callsign, target);
     appendSystemLine(QStringLiteral("Connecting %1 -> %2").arg(callsign, target));

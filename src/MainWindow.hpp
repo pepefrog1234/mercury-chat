@@ -54,6 +54,7 @@ private:
     void appendTranscript(const QString &speaker, const QString &text);
     void appendSystemLine(const QString &text);
     void updateBeaconRow(const QString &callsign, int bandwidthHz);
+    bool applyStationSettings(bool warnIfMissing);
     bool setComboCurrentData(QComboBox *combo, const QVariant &value) const;
     QString localCallsign() const;
     int selectedBandwidth() const;
