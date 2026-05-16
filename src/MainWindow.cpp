@@ -16,6 +16,7 @@
 #include <QProcess>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSettings>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
@@ -36,19 +37,30 @@ QString utcTimeLabel()
 {
     return QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
 }
+
+QVariant currentComboData(const QComboBox *combo, const QVariant &fallback = {})
+{
+    return combo && combo->currentIndex() >= 0 ? combo->currentData() : fallback;
+}
 }
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     buildUi();
+    loadSettings();
     wireSignals();
-    resize(1180, 760);
     setWindowTitle(QStringLiteral("Mercury Chat"));
     QTimer::singleShot(0, this, [this]() {
         if (autoStartModemCheck_->isChecked())
             startModem();
     });
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    saveSettings();
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::buildUi()
@@ -276,6 +288,70 @@ void MainWindow::buildUi()
     beaconTimer_ = new QTimer(this);
 }
 
+void MainWindow::loadSettings()
+{
+    QSettings settings;
+
+    restoreGeometry(settings.value(QStringLiteral("window/geometry")).toByteArray());
+
+    modemPathEdit_->setText(settings.value(QStringLiteral("modem/executable"), modemPathEdit_->text()).toString());
+    modemArgsEdit_->setText(settings.value(QStringLiteral("modem/args")).toString());
+    broadcastPortSpin_->setValue(settings.value(QStringLiteral("modem/broadcastPort"), broadcastPortSpin_->value()).toInt());
+    autoStartModemCheck_->setChecked(settings.value(QStringLiteral("modem/autoStart"), autoStartModemCheck_->isChecked()).toBool());
+
+    callsignEdit_->setText(settings.value(QStringLiteral("station/callsign")).toString());
+    hostEdit_->setText(settings.value(QStringLiteral("tnc/host"), hostEdit_->text()).toString());
+    basePortSpin_->setValue(settings.value(QStringLiteral("tnc/basePort"), basePortSpin_->value()).toInt());
+    setComboCurrentData(bandwidthCombo_, settings.value(QStringLiteral("tnc/bandwidth"), selectedBandwidth()));
+
+    autoBeaconCheck_->setChecked(settings.value(QStringLiteral("beacon/auto"), autoBeaconCheck_->isChecked()).toBool());
+    beaconIntervalSpin_->setValue(settings.value(QStringLiteral("beacon/intervalSeconds"), beaconIntervalSpin_->value()).toInt());
+
+    setComboCurrentData(catModelCombo_, settings.value(QStringLiteral("cat/modelId"), currentComboData(catModelCombo_, 0)));
+    catDeviceEdit_->setText(settings.value(QStringLiteral("cat/device")).toString());
+    const QString savedBaud = settings.value(QStringLiteral("cat/baud"), catBaudCombo_->currentText()).toString();
+    if (!setComboCurrentData(catBaudCombo_, savedBaud.toInt()))
+        catBaudCombo_->setCurrentText(savedBaud);
+    setComboCurrentData(catRtsCombo_, settings.value(QStringLiteral("cat/rts"), currentComboData(catRtsCombo_, 0)));
+    setComboCurrentData(catDtrCombo_, settings.value(QStringLiteral("cat/dtr"), currentComboData(catDtrCombo_, 0)));
+    setComboCurrentData(catPttMethodCombo_, settings.value(QStringLiteral("cat/pttMethod"), currentComboData(catPttMethodCombo_, 0)));
+    catFollowPttCheck_->setChecked(settings.value(QStringLiteral("cat/followModemPtt"), catFollowPttCheck_->isChecked()).toBool());
+    catFrequencyEdit_->setText(settings.value(QStringLiteral("cat/frequencyHz"), catFrequencyEdit_->text()).toString());
+
+    if (settings.value(QStringLiteral("window/geometry")).isNull())
+        resize(1180, 760);
+}
+
+void MainWindow::saveSettings() const
+{
+    QSettings settings;
+
+    settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
+
+    settings.setValue(QStringLiteral("modem/executable"), modemPathEdit_->text().trimmed());
+    settings.setValue(QStringLiteral("modem/args"), modemArgsEdit_->text());
+    settings.setValue(QStringLiteral("modem/broadcastPort"), broadcastPortSpin_->value());
+    settings.setValue(QStringLiteral("modem/autoStart"), autoStartModemCheck_->isChecked());
+
+    settings.setValue(QStringLiteral("station/callsign"), localCallsign());
+    settings.setValue(QStringLiteral("tnc/host"), hostEdit_->text().trimmed());
+    settings.setValue(QStringLiteral("tnc/basePort"), basePortSpin_->value());
+    settings.setValue(QStringLiteral("tnc/bandwidth"), selectedBandwidth());
+
+    settings.setValue(QStringLiteral("beacon/auto"), autoBeaconCheck_->isChecked());
+    settings.setValue(QStringLiteral("beacon/intervalSeconds"), beaconIntervalSpin_->value());
+
+    settings.setValue(QStringLiteral("cat/modelId"), currentComboData(catModelCombo_, 0));
+    settings.setValue(QStringLiteral("cat/device"), catDeviceEdit_->text().trimmed());
+    settings.setValue(QStringLiteral("cat/baud"), catBaudCombo_->currentText().trimmed());
+    settings.setValue(QStringLiteral("cat/rts"), currentComboData(catRtsCombo_, 0));
+    settings.setValue(QStringLiteral("cat/dtr"), currentComboData(catDtrCombo_, 0));
+    settings.setValue(QStringLiteral("cat/pttMethod"), currentComboData(catPttMethodCombo_, 0));
+    settings.setValue(QStringLiteral("cat/followModemPtt"), catFollowPttCheck_->isChecked());
+    settings.setValue(QStringLiteral("cat/frequencyHz"), catFrequencyEdit_->text().trimmed());
+    settings.sync();
+}
+
 void MainWindow::wireSignals()
 {
     connect(modemStartButton_, &QPushButton::clicked, this, &MainWindow::startModem);
@@ -396,6 +472,8 @@ void MainWindow::wireSignals()
 
 void MainWindow::startModem()
 {
+    saveSettings();
+
     QStringList arguments;
     arguments << QStringLiteral("-p") << QString::number(basePortSpin_->value());
     arguments << QStringLiteral("-b") << QString::number(broadcastPortSpin_->value());
@@ -413,6 +491,8 @@ void MainWindow::stopModem()
 
 void MainWindow::connectTnc()
 {
+    saveSettings();
+
     if (tnc_.isControlConnected() || tnc_.isDataConnected())
     {
         tnc_.disconnectFromModem();
@@ -432,6 +512,7 @@ void MainWindow::initializeStation()
     }
 
     tnc_.initializeStation(callsign, selectedBandwidth());
+    saveSettings();
     appendSystemLine(QStringLiteral("Initialized %1 at %2").arg(callsign, bandwidthLabel(selectedBandwidth())));
 }
 
@@ -543,6 +624,7 @@ void MainWindow::connectOrDisconnectCat()
                     static_cast<CatSerialLineState>(catRtsCombo_->currentData().toInt()),
                     static_cast<CatSerialLineState>(catDtrCombo_->currentData().toInt()),
                     static_cast<CatPttMethod>(catPttMethodCombo_->currentData().toInt()));
+    saveSettings();
 }
 
 void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
@@ -553,7 +635,14 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
     connectBeaconButton_->setEnabled(controlConnected);
     autoBeaconCheck_->setEnabled(controlConnected);
     if (!controlConnected)
-        autoBeaconCheck_->setChecked(false);
+    {
+        beaconTimer_->stop();
+    }
+    else if (autoBeaconCheck_->isChecked() && !beaconTimer_->isActive())
+    {
+        sendBeacon();
+        beaconTimer_->start(beaconIntervalSpin_->value() * 1000);
+    }
     tncStatusLabel_->setText(QStringLiteral("Control %1, data %2")
                                  .arg(controlConnected ? QStringLiteral("on") : QStringLiteral("off"),
                                       dataConnected ? QStringLiteral("on") : QStringLiteral("off")));
@@ -590,6 +679,19 @@ void MainWindow::updateBeaconRow(const QString &callsign, int bandwidthHz)
     beaconTable_->setItem(row, 0, new QTableWidgetItem(callsign));
     beaconTable_->setItem(row, 1, new QTableWidgetItem(QString::number(bandwidthHz)));
     beaconTable_->setItem(row, 2, new QTableWidgetItem(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"))));
+}
+
+bool MainWindow::setComboCurrentData(QComboBox *combo, const QVariant &value) const
+{
+    if (!combo)
+        return false;
+
+    const int index = combo->findData(value);
+    if (index < 0)
+        return false;
+
+    combo->setCurrentIndex(index);
+    return true;
 }
 
 QString MainWindow::localCallsign() const

@@ -22,6 +22,8 @@ Useful Mercury commands used here:
 
 Received `CQFRAME <call> <bw>` lines are shown in the beacon table. Double-click a beacon callsign to send `CONNECT <mycall> <theircall>`.
 
+Operator settings are saved with Qt's platform settings store under `Rhizomatica/MercuryChat`. Saved fields include callsign, TNC host/ports, modem path/arguments, beacon interval, selected bandwidth, CAT radio, serial port, baud rate, RTS/DTR states, PTT method, and window geometry.
+
 ## Chat Payload Format
 
 Chat messages are UTF-8 JSON Lines on Mercury's ARQ data port:

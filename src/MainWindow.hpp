@@ -17,6 +17,8 @@ class QSpinBox;
 class QTableWidget;
 class QTextEdit;
 class QTimer;
+class QCloseEvent;
+class QVariant;
 
 class MainWindow : public QMainWindow
 {
@@ -24,6 +26,9 @@ class MainWindow : public QMainWindow
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
 
 private slots:
     void connectTnc();
@@ -43,9 +48,12 @@ private slots:
 private:
     void buildUi();
     void wireSignals();
+    void loadSettings();
+    void saveSettings() const;
     void appendTranscript(const QString &speaker, const QString &text);
     void appendSystemLine(const QString &text);
     void updateBeaconRow(const QString &callsign, int bandwidthHz);
+    bool setComboCurrentData(QComboBox *combo, const QVariant &value) const;
     QString localCallsign() const;
     int selectedBandwidth() const;
 
