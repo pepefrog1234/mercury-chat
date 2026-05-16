@@ -534,11 +534,36 @@ void MainWindow::wireSignals()
     connect(&tnc_, &TncClient::controlLineReceived, this, [this](const QString &line) {
         appendStatusLine(QStringLiteral("TNC: %1").arg(line));
     });
+    connect(&tnc_, &TncClient::commandCompleted, this, [this](const QString &command, const QString &response) {
+        const QString label = command.isEmpty() ? QStringLiteral("(unknown command)") : command;
+        appendStatusLine(QStringLiteral("TNC command %1: %2").arg(label, response));
+
+        if (command.startsWith(QStringLiteral("CQFRAME ")))
+        {
+            if (response == QLatin1String("OK"))
+            {
+                beaconCommandAccepted_ = true;
+                appendSystemLine(QStringLiteral("Beacon accepted by modem"));
+            }
+            else
+            {
+                beaconCommandAccepted_ = false;
+                appendSystemLine(QStringLiteral("Beacon rejected by modem: %1").arg(command));
+            }
+        }
+    });
     connect(&tnc_, &TncClient::cqFrameReceived, this, &MainWindow::onBeaconReceived);
     connect(&tnc_, &TncClient::linkConnected, this, &MainWindow::onLinkConnected);
     connect(&tnc_, &TncClient::linkDisconnected, this, &MainWindow::onLinkDisconnected);
     connect(&tnc_, &TncClient::pendingChanged, this, [this](bool pending) {
         linkStatusLabel_->setText(pending ? QStringLiteral("Pending") : QStringLiteral("Idle"));
+        if (beaconCommandAccepted_)
+        {
+            appendSystemLine(pending ? QStringLiteral("Beacon transmission started")
+                                     : QStringLiteral("Beacon transmission completed"));
+            if (!pending)
+                beaconCommandAccepted_ = false;
+        }
     });
     connect(&tnc_, &TncClient::pttChanged, this, [this](bool enabled) {
         pttStatusLabel_->setText(enabled ? QStringLiteral("PTT on") : QStringLiteral("PTT off"));
@@ -719,7 +744,7 @@ void MainWindow::sendBeacon()
         return;
 
     tnc_.sendCqFrame(callsign, selectedBandwidth());
-    appendSystemLine(QStringLiteral("Beacon sent as %1 %2").arg(callsign, bandwidthLabel(selectedBandwidth())));
+    appendSystemLine(QStringLiteral("Beacon requested as %1 %2").arg(callsign, bandwidthLabel(selectedBandwidth())));
 }
 
 void MainWindow::connectSelectedBeacon()

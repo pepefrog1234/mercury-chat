@@ -69,6 +69,7 @@ void TncClient::connectToModem(const QString &host, quint16 basePort)
 
 void TncClient::disconnectFromModem()
 {
+    pendingCommands_.clear();
     controlSocket_.abort();
     dataSocket_.abort();
     emitSocketState();
@@ -99,6 +100,7 @@ void TncClient::sendCommand(const QString &command)
 
     QByteArray bytes = command.toUtf8();
     bytes.append('\r');
+    pendingCommands_.enqueue(command);
     controlSocket_.write(bytes);
     controlSocket_.flush();
 }
@@ -184,7 +186,9 @@ void TncClient::parseControlLine(const QString &line)
 
     if (line == QLatin1String("OK") || line == QLatin1String("WRONG"))
     {
+        const QString command = pendingCommands_.isEmpty() ? QString() : pendingCommands_.dequeue();
         emit commandResponse(line);
+        emit commandCompleted(command, line);
         return;
     }
 

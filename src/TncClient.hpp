@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QObject>
+#include <QQueue>
 #include <QTcpSocket>
 
 class TncClient : public QObject
@@ -30,6 +31,7 @@ signals:
     void statusMessage(const QString &message);
     void controlLineReceived(const QString &line);
     void commandResponse(const QString &line);
+    void commandCompleted(const QString &command, const QString &response);
     void cqFrameReceived(const QString &callsign, int bandwidthHz);
     void linkConnected(const QString &source, const QString &destination, int bandwidthHz);
     void linkDisconnected();
@@ -51,5 +53,5 @@ private:
     QTcpSocket controlSocket_;
     QTcpSocket dataSocket_;
     QByteArray controlBuffer_;
+    QQueue<QString> pendingCommands_;
 };
-

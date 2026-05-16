@@ -67,6 +67,7 @@ private:
     QByteArray chatRxBuffer_;
     QString peerCallsign_;
     bool arqConnected_ = false;
+    bool beaconCommandAccepted_ = false;
 
     QLineEdit *modemPathEdit_ = nullptr;
     QLineEdit *modemArgsEdit_ = nullptr;
