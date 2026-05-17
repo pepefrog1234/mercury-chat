@@ -174,6 +174,17 @@ void MainWindow::buildUi()
     bandwidthCombo_->addItem(QStringLiteral("BW500"), 500);
     bandwidthCombo_->addItem(QStringLiteral("BW2750"), 2750);
 
+    peerCallsignEdit_ = new QLineEdit(stationGroup);
+    peerCallsignEdit_->setPlaceholderText(QStringLiteral("Remote callsign"));
+    connectCallsignButton_ = new QPushButton(QStringLiteral("Connect"), stationGroup);
+    connectCallsignButton_->setEnabled(false);
+
+    auto *peerConnectRow = new QWidget(stationGroup);
+    auto *peerConnectLayout = new QHBoxLayout(peerConnectRow);
+    peerConnectLayout->setContentsMargins(0, 0, 0, 0);
+    peerConnectLayout->addWidget(peerCallsignEdit_, 1);
+    peerConnectLayout->addWidget(connectCallsignButton_);
+
     tncConnectButton_ = new QPushButton(QStringLiteral("Connect TNC"), stationGroup);
     stationInitButton_ = new QPushButton(QStringLiteral("Initialize"), stationGroup);
     linkDisconnectButton_ = new QPushButton(QStringLiteral("Disconnect Link"), stationGroup);
@@ -191,6 +202,7 @@ void MainWindow::buildUi()
     stationLayout->addRow(QStringLiteral("Mercury host"), hostEdit_);
     stationLayout->addRow(QStringLiteral("ARQ base port"), basePortSpin_);
     stationLayout->addRow(QStringLiteral("Bandwidth"), bandwidthCombo_);
+    stationLayout->addRow(QStringLiteral("Connect to"), peerConnectRow);
     stationLayout->addRow(stationButtonRow);
 
     auto *statusGroup = new QGroupBox(QStringLiteral("Status"), leftPanel);
@@ -410,6 +422,7 @@ void MainWindow::loadSettings()
     setComboCurrentData(captureChannelCombo_, settings.value(QStringLiteral("audio/captureChannel"), currentComboData(captureChannelCombo_, QStringLiteral("left"))));
 
     callsignEdit_->setText(settings.value(QStringLiteral("station/callsign")).toString());
+    peerCallsignEdit_->setText(settings.value(QStringLiteral("station/peerCallsign")).toString());
     hostEdit_->setText(settings.value(QStringLiteral("tnc/host"), hostEdit_->text()).toString());
     basePortSpin_->setValue(settings.value(QStringLiteral("tnc/basePort"), basePortSpin_->value()).toInt());
     setComboCurrentData(bandwidthCombo_, settings.value(QStringLiteral("tnc/bandwidth"), selectedBandwidth()));
@@ -449,6 +462,7 @@ void MainWindow::saveSettings() const
     settings.setValue(QStringLiteral("audio/captureChannel"), currentComboData(captureChannelCombo_, QStringLiteral("left")));
 
     settings.setValue(QStringLiteral("station/callsign"), localCallsign());
+    settings.setValue(QStringLiteral("station/peerCallsign"), ChatProtocol::normalizeCallsign(peerCallsignEdit_->text()));
     settings.setValue(QStringLiteral("tnc/host"), hostEdit_->text().trimmed());
     settings.setValue(QStringLiteral("tnc/basePort"), basePortSpin_->value());
     settings.setValue(QStringLiteral("tnc/bandwidth"), selectedBandwidth());
@@ -501,6 +515,11 @@ void MainWindow::wireSignals()
 
     connect(tncConnectButton_, &QPushButton::clicked, this, &MainWindow::connectTnc);
     connect(stationInitButton_, &QPushButton::clicked, this, &MainWindow::initializeStation);
+    connect(connectCallsignButton_, &QPushButton::clicked, this, &MainWindow::connectEnteredCallsign);
+    connect(peerCallsignEdit_, &QLineEdit::returnPressed, this, &MainWindow::connectEnteredCallsign);
+    connect(peerCallsignEdit_, &QLineEdit::editingFinished, this, [this]() {
+        saveSettings();
+    });
     connect(linkDisconnectButton_, &QPushButton::clicked, &tnc_, &TncClient::disconnectLink);
     connect(beaconSendButton_, &QPushButton::clicked, this, &MainWindow::sendBeacon);
     connect(connectBeaconButton_, &QPushButton::clicked, this, &MainWindow::connectSelectedBeacon);
@@ -755,10 +774,54 @@ void MainWindow::connectSelectedBeacon()
 
     const int row = selected.first()->row();
     const QString target = beaconTable_->item(row, 0)->text();
+    peerCallsignEdit_->setText(target);
     const QString callsign = localCallsign();
     if (callsign.isEmpty())
     {
         QMessageBox::warning(this, QStringLiteral("Callsign required"), QStringLiteral("Set a valid local callsign before connecting."));
+        return;
+    }
+
+    if (!tnc_.isControlConnected())
+    {
+        appendSystemLine(QStringLiteral("Connect not started: TNC control port is not connected."));
+        if (modem_.isRunning())
+        {
+            tncRetryAttempts_ = 0;
+            tncRetryTimer_->start();
+        }
+        return;
+    }
+
+    if (!applyStationSettings(false))
+        return;
+
+    tnc_.connectPeer(callsign, target);
+    appendSystemLine(QStringLiteral("Connecting %1 -> %2").arg(callsign, target));
+}
+
+void MainWindow::connectEnteredCallsign()
+{
+    const QString target = ChatProtocol::normalizeCallsign(peerCallsignEdit_->text());
+    peerCallsignEdit_->setText(target);
+    saveSettings();
+
+    const QString callsign = localCallsign();
+    if (callsign.isEmpty())
+    {
+        QMessageBox::warning(this, QStringLiteral("Callsign required"), QStringLiteral("Set a valid local callsign before connecting."));
+        return;
+    }
+
+    if (target.isEmpty())
+    {
+        QMessageBox::warning(this, QStringLiteral("Remote callsign required"), QStringLiteral("Enter the remote callsign before connecting."));
+        return;
+    }
+
+    if (target == callsign)
+    {
+        QMessageBox::warning(this, QStringLiteral("Remote callsign required"), QStringLiteral("Enter a callsign different from your local callsign."));
         return;
     }
 
@@ -876,6 +939,7 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
     stationInitButton_->setEnabled(controlConnected);
     beaconSendButton_->setEnabled(controlConnected);
     connectBeaconButton_->setEnabled(controlConnected);
+    connectCallsignButton_->setEnabled(controlConnected);
     autoBeaconCheck_->setEnabled(controlConnected);
     if (!controlConnected)
     {

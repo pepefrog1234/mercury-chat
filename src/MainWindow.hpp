@@ -35,6 +35,7 @@ private slots:
     void initializeStation();
     void sendBeacon();
     void connectSelectedBeacon();
+    void connectEnteredCallsign();
     void startModem();
     void stopModem();
     void retryTncConnection();
@@ -84,9 +85,11 @@ private:
     QLineEdit *hostEdit_ = nullptr;
     QSpinBox *basePortSpin_ = nullptr;
     QLineEdit *callsignEdit_ = nullptr;
+    QLineEdit *peerCallsignEdit_ = nullptr;
     QComboBox *bandwidthCombo_ = nullptr;
     QPushButton *tncConnectButton_ = nullptr;
     QPushButton *stationInitButton_ = nullptr;
+    QPushButton *connectCallsignButton_ = nullptr;
     QPushButton *linkDisconnectButton_ = nullptr;
     QLabel *tncStatusLabel_ = nullptr;
     QLabel *linkStatusLabel_ = nullptr;

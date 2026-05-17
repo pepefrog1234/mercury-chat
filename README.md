@@ -20,13 +20,13 @@ Useful Mercury commands used here:
 - `CONNECT <mycall> <theircall>` starts an ARQ connection.
 - `DISCONNECT` ends the current ARQ session.
 
-Received `CQFRAME <call> <bw>` lines are shown in the beacon table. Double-click a beacon callsign to send `CONNECT <mycall> <theircall>`.
+Received `CQFRAME <call> <bw>` lines are shown in the beacon table. Double-click a beacon callsign to send `CONNECT <mycall> <theircall>`. The Station tab also accepts a manually entered remote callsign for direct ARQ connection attempts.
 
 Mercury Chat deliberately leaves Mercury's adaptive FreeDV mode selection alone. The GUI only sends the selected `BW...` token and advertises that token in beacons; it does not select DATAC modes, force speed levels, or override ARQ gear shifting. `BITRATE`, `SN`, `BUFFER`, and `PTT` lines from Mercury are treated as status telemetry.
 
 The main `Chat` tab is kept for chat text plus beacon and link activity. Mercury process output, TNC control lines, CAT messages, and telemetry are shown in the separate `Modem Status` tab.
 
-Operator settings are saved with Qt's platform settings store under `Rhizomatica/MercuryChat`. Saved fields include callsign, TNC host/ports, modem path/arguments, audio input/output device, sound system, RX channel, beacon interval, selected bandwidth, CAT radio, serial port, baud rate, RTS/DTR states, PTT method, and window geometry.
+Operator settings are saved with Qt's platform settings store under `Rhizomatica/MercuryChat`. Saved fields include callsign, last remote callsign, TNC host/ports, modem path/arguments, audio input/output device, sound system, RX channel, beacon interval, selected bandwidth, CAT radio, serial port, baud rate, RTS/DTR states, PTT method, and window geometry.
 
 ## Chat Payload Format
 
