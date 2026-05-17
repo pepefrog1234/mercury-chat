@@ -20,7 +20,7 @@ Useful Mercury commands used here:
 - `CONNECT <mycall> <theircall>` starts an ARQ connection.
 - `DISCONNECT` ends the current ARQ session.
 
-Received `CQFRAME <call> <bw>` lines are shown in the beacon table. Double-click a beacon callsign to send `CONNECT <mycall> <theircall>`. The Station tab also accepts a manually entered remote callsign for direct ARQ connection attempts.
+Received `CQFRAME <call> <bw>` lines are shown in the beacon table. Double-click a beacon callsign to send `CONNECT <mycall> <theircall>`. The Beacons tab also accepts a manually entered remote callsign for direct ARQ connection attempts.
 
 Mercury Chat deliberately leaves Mercury's adaptive FreeDV mode selection alone. The GUI only sends the selected `BW...` token and advertises that token in beacons; it does not select DATAC modes, force speed levels, or override ARQ gear shifting. `BITRATE`, `SN`, `BUFFER`, and `PTT` lines from Mercury are treated as status telemetry.
 

@@ -174,17 +174,6 @@ void MainWindow::buildUi()
     bandwidthCombo_->addItem(QStringLiteral("BW500"), 500);
     bandwidthCombo_->addItem(QStringLiteral("BW2750"), 2750);
 
-    peerCallsignEdit_ = new QLineEdit(stationGroup);
-    peerCallsignEdit_->setPlaceholderText(QStringLiteral("Remote callsign"));
-    connectCallsignButton_ = new QPushButton(QStringLiteral("Connect"), stationGroup);
-    connectCallsignButton_->setEnabled(false);
-
-    auto *peerConnectRow = new QWidget(stationGroup);
-    auto *peerConnectLayout = new QHBoxLayout(peerConnectRow);
-    peerConnectLayout->setContentsMargins(0, 0, 0, 0);
-    peerConnectLayout->addWidget(peerCallsignEdit_, 1);
-    peerConnectLayout->addWidget(connectCallsignButton_);
-
     tncConnectButton_ = new QPushButton(QStringLiteral("Connect TNC"), stationGroup);
     stationInitButton_ = new QPushButton(QStringLiteral("Initialize"), stationGroup);
     linkDisconnectButton_ = new QPushButton(QStringLiteral("Disconnect Link"), stationGroup);
@@ -202,7 +191,6 @@ void MainWindow::buildUi()
     stationLayout->addRow(QStringLiteral("Mercury host"), hostEdit_);
     stationLayout->addRow(QStringLiteral("ARQ base port"), basePortSpin_);
     stationLayout->addRow(QStringLiteral("Bandwidth"), bandwidthCombo_);
-    stationLayout->addRow(QStringLiteral("Connect to"), peerConnectRow);
     stationLayout->addRow(stationButtonRow);
 
     auto *statusGroup = new QGroupBox(QStringLiteral("Status"), leftPanel);
@@ -239,6 +227,18 @@ void MainWindow::buildUi()
     beaconControlLayout->addWidget(autoBeaconCheck_);
     beaconControlLayout->addWidget(beaconIntervalSpin_);
 
+    auto *peerConnectRow = new QWidget(beaconGroup);
+    auto *peerConnectLayout = new QHBoxLayout(peerConnectRow);
+    peerConnectLayout->setContentsMargins(0, 0, 0, 0);
+    auto *peerConnectLabel = new QLabel(QStringLiteral("Connect to"), peerConnectRow);
+    peerCallsignEdit_ = new QLineEdit(peerConnectRow);
+    peerCallsignEdit_->setPlaceholderText(QStringLiteral("Remote callsign"));
+    connectCallsignButton_ = new QPushButton(QStringLiteral("Connect"), peerConnectRow);
+    connectCallsignButton_->setEnabled(false);
+    peerConnectLayout->addWidget(peerConnectLabel);
+    peerConnectLayout->addWidget(peerCallsignEdit_, 1);
+    peerConnectLayout->addWidget(connectCallsignButton_);
+
     beaconTable_ = new QTableWidget(0, 3, beaconGroup);
     beaconTable_->setHorizontalHeaderLabels({QStringLiteral("Call"), QStringLiteral("BW"), QStringLiteral("Last heard")});
     beaconTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -250,6 +250,7 @@ void MainWindow::buildUi()
     connectBeaconButton_ = new QPushButton(QStringLiteral("Connect Selected"), beaconGroup);
     connectBeaconButton_->setEnabled(false);
     beaconLayout->addWidget(beaconControlRow);
+    beaconLayout->addWidget(peerConnectRow);
     beaconLayout->addWidget(beaconTable_);
     beaconLayout->addWidget(connectBeaconButton_);
 
