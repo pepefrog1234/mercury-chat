@@ -67,7 +67,7 @@ private:
     void appendStatusLine(const QString &text);
     void showPartialIncoming(const ChatPartialMessage &message);
     void clearPartialIncoming();
-    void insertTranscriptLine(const QString &line, int *blockNumber = nullptr);
+    void insertTranscriptLine(const QString &line, int *blockNumber = nullptr, bool sentText = false);
     bool replaceTranscriptBlock(int blockNumber, const QString &line);
     void autoInitializeStation();
     void markStationSettingsDirty();

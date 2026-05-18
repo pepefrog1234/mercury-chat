@@ -3,6 +3,7 @@
 #include "ChatProtocol.hpp"
 
 #include <QCheckBox>
+#include <QColor>
 #include <QCompleter>
 #include <QComboBox>
 #include <QDateTime>
@@ -28,6 +29,7 @@
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTextBlock>
+#include <QTextCharFormat>
 #include <QTextEdit>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -1198,7 +1200,7 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
 
 void MainWindow::appendTranscript(const QString &speaker, const QString &text)
 {
-    insertTranscriptLine(transcriptLine(speaker, text));
+    insertTranscriptLine(transcriptLine(speaker, text), nullptr, true);
 }
 
 void MainWindow::appendIncomingTranscript(const QString &speaker, const QString &text)
@@ -1320,12 +1322,19 @@ void MainWindow::clearPartialIncoming()
     partialRxTimeLabel_.clear();
 }
 
-void MainWindow::insertTranscriptLine(const QString &line, int *blockNumber)
+void MainWindow::insertTranscriptLine(const QString &line, int *blockNumber, bool sentText)
 {
-    transcript_->moveCursor(QTextCursor::End);
+    QTextCursor cursor = transcript_->textCursor();
+    cursor.movePosition(QTextCursor::End);
     if (blockNumber)
         *blockNumber = transcript_->document()->blockCount() - 1;
-    transcript_->insertPlainText(line + QLatin1Char('\n'));
+
+    QTextCharFormat format;
+    if (sentText)
+        format.setForeground(QColor(QStringLiteral("#006400")));
+    cursor.setCharFormat(format);
+    cursor.insertText(line + QLatin1Char('\n'));
+    transcript_->setTextCursor(cursor);
     transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
 }
 
