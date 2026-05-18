@@ -3,6 +3,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QUuid>
 
 #include <cstring>
 
@@ -204,22 +205,50 @@ QString previewStringField(const QByteArray &bytes, const char *key)
 
     return decodeJsonStringPrefix(bytes, fieldStart + needle.size());
 }
-}
 
-QByteArray ChatProtocol::encodeTextMessage(const QString &from, const QString &text)
+QByteArray encodeFrame(const QJsonObject &object)
 {
-    QJsonObject object;
-    object.insert(QStringLiteral("v"), 1);
-    object.insert(QStringLiteral("type"), QStringLiteral("msg"));
-    object.insert(QStringLiteral("from"), normalizeCallsign(from));
-    object.insert(QStringLiteral("time"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
-    object.insert(QStringLiteral("text"), text);
-
     QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact);
     QByteArray frame = QByteArray(kFrameMagic) + QByteArray::number(payload.size()) + '\n';
     frame.append(payload);
     frame.append('\n');
     return frame;
+}
+}
+
+QString ChatProtocol::createMessageId()
+{
+    return QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
+QByteArray ChatProtocol::encodeTextMessage(const QString &from, const QString &text, const QString &messageId)
+{
+    QJsonObject object;
+    object.insert(QStringLiteral("v"), 1);
+    object.insert(QStringLiteral("type"), QStringLiteral("msg"));
+    if (!messageId.trimmed().isEmpty())
+        object.insert(QStringLiteral("id"), messageId.trimmed());
+    object.insert(QStringLiteral("from"), normalizeCallsign(from));
+    object.insert(QStringLiteral("time"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    object.insert(QStringLiteral("text"), text);
+
+    return encodeFrame(object);
+}
+
+QByteArray ChatProtocol::encodeAckMessage(const QString &from, const QString &messageId)
+{
+    const QString trimmedId = messageId.trimmed();
+    if (trimmedId.isEmpty())
+        return {};
+
+    QJsonObject object;
+    object.insert(QStringLiteral("v"), 1);
+    object.insert(QStringLiteral("type"), QStringLiteral("ack"));
+    object.insert(QStringLiteral("ack"), trimmedId);
+    object.insert(QStringLiteral("from"), normalizeCallsign(from));
+    object.insert(QStringLiteral("time"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+
+    return encodeFrame(object);
 }
 
 QList<ChatMessage> ChatProtocol::appendAndDecode(QByteArray &buffer, const QByteArray &chunk)
@@ -344,13 +373,29 @@ ChatMessage ChatProtocol::decodeLine(const QByteArray &line)
     }
 
     const QJsonObject object = document.object();
-    if (object.value(QStringLiteral("type")).toString() != QLatin1String("msg"))
+    const QString type = object.value(QStringLiteral("type")).toString();
+    if (type == QLatin1String("ack"))
+    {
+        ChatMessage message;
+        message.kind = ChatMessage::Kind::Ack;
+        message.ackId = object.value(QStringLiteral("ack")).toString().trimmed();
+        message.from = normalizeCallsign(object.value(QStringLiteral("from")).toString());
+        message.timestampUtc = QDateTime::fromString(object.value(QStringLiteral("time")).toString(), Qt::ISODateWithMs);
+        if (!message.timestampUtc.isValid())
+            message.timestampUtc = QDateTime::currentDateTimeUtc();
+        if (message.ackId.isEmpty())
+            return rawMessageFromLine(line);
+        return message;
+    }
+
+    if (type != QLatin1String("msg"))
     {
         return rawMessageFromLine(line);
     }
 
     ChatMessage message;
     message.kind = ChatMessage::Kind::Text;
+    message.id = object.value(QStringLiteral("id")).toString().trimmed();
     message.from = normalizeCallsign(object.value(QStringLiteral("from")).toString());
     message.text = object.value(QStringLiteral("text")).toString();
     message.timestampUtc = QDateTime::fromString(object.value(QStringLiteral("time")).toString(), Qt::ISODateWithMs);

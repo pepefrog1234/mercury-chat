@@ -992,10 +992,11 @@ void MainWindow::sendChatMessage()
         return;
 
     const QString callsign = localCallsign();
-    const QByteArray payload = ChatProtocol::encodeTextMessage(callsign, text);
+    const QString messageId = ChatProtocol::createMessageId();
+    const QByteArray payload = ChatProtocol::encodeTextMessage(callsign, text, messageId);
     beginTransmitProgress(payload.size());
     tnc_.sendPayload(payload);
-    appendTranscript(callsign, text);
+    appendTranscript(callsign, text, messageId);
     messageEdit_->clear();
 }
 
@@ -1055,11 +1056,21 @@ void MainWindow::onLinkDisconnected()
 void MainWindow::onDataReceived(const QByteArray &bytes)
 {
     const QList<ChatMessage> messages = ChatProtocol::appendAndDecode(chatRxBuffer_, bytes);
-    const bool decodedCompleteMessages = !messages.isEmpty();
+    bool decodedDisplayMessages = false;
     for (const ChatMessage &message : messages)
     {
+        if (message.kind == ChatMessage::Kind::Ack)
+        {
+            confirmSentTranscript(message.ackId);
+            continue;
+        }
+
         const QString speaker = message.from.isEmpty() ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_) : message.from;
         appendIncomingTranscript(speaker, message.text);
+        decodedDisplayMessages = true;
+        const QByteArray ack = ChatProtocol::encodeAckMessage(localCallsign(), message.id);
+        if (!ack.isEmpty())
+            tnc_.sendPayload(ack);
     }
 
     const ChatPartialMessage partial = ChatProtocol::previewIncompleteMessage(chatRxBuffer_);
@@ -1068,7 +1079,7 @@ void MainWindow::onDataReceived(const QByteArray &bytes)
     else
     {
         clearPartialIncoming();
-        if (decodedCompleteMessages && chatRxBuffer_.isEmpty())
+        if (decodedDisplayMessages && chatRxBuffer_.isEmpty())
             finishReceiveProgress();
     }
 }
@@ -1129,6 +1140,7 @@ void MainWindow::resetLinkStatus()
     bufferStatusLabel_->setText(QStringLiteral("0 bytes"));
     lastBufferBytes_ = 0;
     chatRxBuffer_.clear();
+    pendingSentBlocks_.clear();
     clearPartialIncoming();
     setTransferIdle();
     updateLinkControls();
@@ -1198,9 +1210,12 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
     updateLinkControls();
 }
 
-void MainWindow::appendTranscript(const QString &speaker, const QString &text)
+void MainWindow::appendTranscript(const QString &speaker, const QString &text, const QString &messageId)
 {
-    insertTranscriptLine(transcriptLine(speaker, text), nullptr, true);
+    int blockNumber = -1;
+    insertTranscriptLine(transcriptLine(speaker, text), messageId.isEmpty() ? nullptr : &blockNumber);
+    if (!messageId.isEmpty() && blockNumber >= 0)
+        pendingSentBlocks_.insert(messageId, blockNumber);
 }
 
 void MainWindow::appendIncomingTranscript(const QString &speaker, const QString &text)
@@ -1322,17 +1337,14 @@ void MainWindow::clearPartialIncoming()
     partialRxTimeLabel_.clear();
 }
 
-void MainWindow::insertTranscriptLine(const QString &line, int *blockNumber, bool sentText)
+void MainWindow::insertTranscriptLine(const QString &line, int *blockNumber)
 {
     QTextCursor cursor = transcript_->textCursor();
     cursor.movePosition(QTextCursor::End);
     if (blockNumber)
         *blockNumber = transcript_->document()->blockCount() - 1;
 
-    QTextCharFormat format;
-    if (sentText)
-        format.setForeground(QColor(QStringLiteral("#006400")));
-    cursor.setCharFormat(format);
+    cursor.setCharFormat(QTextCharFormat());
     cursor.insertText(line + QLatin1Char('\n'));
     transcript_->setTextCursor(cursor);
     transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
@@ -1350,6 +1362,34 @@ bool MainWindow::replaceTranscriptBlock(int blockNumber, const QString &line)
     QTextCursor cursor(block);
     cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
     cursor.insertText(line);
+    transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
+    return true;
+}
+
+void MainWindow::confirmSentTranscript(const QString &messageId)
+{
+    const auto it = pendingSentBlocks_.find(messageId);
+    if (it == pendingSentBlocks_.end())
+        return;
+
+    setTranscriptBlockColor(*it, QColor(QStringLiteral("#006400")));
+    pendingSentBlocks_.erase(it);
+}
+
+bool MainWindow::setTranscriptBlockColor(int blockNumber, const QColor &color)
+{
+    if (blockNumber < 0)
+        return false;
+
+    const QTextBlock block = transcript_->document()->findBlockByNumber(blockNumber);
+    if (!block.isValid())
+        return false;
+
+    QTextCursor cursor(block);
+    cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    QTextCharFormat format;
+    format.setForeground(color);
+    cursor.mergeCharFormat(format);
     transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
     return true;
 }

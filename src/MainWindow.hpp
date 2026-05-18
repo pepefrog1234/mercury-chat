@@ -6,10 +6,12 @@
 
 #include <QByteArray>
 #include <QDateTime>
+#include <QHash>
 #include <QMainWindow>
 #include <QString>
 
 class QCheckBox;
+class QColor;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -61,14 +63,16 @@ private:
     void wireSignals();
     void loadSettings();
     void saveSettings() const;
-    void appendTranscript(const QString &speaker, const QString &text);
+    void appendTranscript(const QString &speaker, const QString &text, const QString &messageId = {});
     void appendIncomingTranscript(const QString &speaker, const QString &text);
     void appendSystemLine(const QString &text);
     void appendStatusLine(const QString &text);
     void showPartialIncoming(const ChatPartialMessage &message);
     void clearPartialIncoming();
-    void insertTranscriptLine(const QString &line, int *blockNumber = nullptr, bool sentText = false);
+    void insertTranscriptLine(const QString &line, int *blockNumber = nullptr);
     bool replaceTranscriptBlock(int blockNumber, const QString &line);
+    void confirmSentTranscript(const QString &messageId);
+    bool setTranscriptBlockColor(int blockNumber, const QColor &color);
     void autoInitializeStation();
     void markStationSettingsDirty();
     void beginTransmitProgress(int totalBytes);
@@ -110,6 +114,7 @@ private:
     bool partialRxVisible_ = false;
     int partialRxBlockNumber_ = -1;
     QString partialRxTimeLabel_;
+    QHash<QString, int> pendingSentBlocks_;
     bool transmitProgressActive_ = false;
     bool transmitProgressSeenBuffer_ = false;
     bool receiveProgressActive_ = false;

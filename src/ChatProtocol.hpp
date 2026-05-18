@@ -10,10 +10,13 @@ struct ChatMessage
     enum class Kind
     {
         Text,
+        Ack,
         Raw
     };
 
     Kind kind = Kind::Text;
+    QString id;
+    QString ackId;
     QString from;
     QString text;
     QDateTime timestampUtc;
@@ -32,7 +35,9 @@ struct ChatPartialMessage
 class ChatProtocol
 {
 public:
-    static QByteArray encodeTextMessage(const QString &from, const QString &text);
+    static QString createMessageId();
+    static QByteArray encodeTextMessage(const QString &from, const QString &text, const QString &messageId = {});
+    static QByteArray encodeAckMessage(const QString &from, const QString &messageId);
     static QList<ChatMessage> appendAndDecode(QByteArray &buffer, const QByteArray &chunk);
     static ChatPartialMessage previewIncompleteMessage(const QByteArray &buffer);
     static QString normalizeCallsign(const QString &callsign);

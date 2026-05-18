@@ -18,7 +18,10 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
 
     QByteArray buffer;
-    const QByteArray encoded = ChatProtocol::encodeTextMessage(QStringLiteral("bv1-2"), QStringLiteral("你好，世界\nMercury"));
+    const QString firstMessageId = ChatProtocol::createMessageId();
+    if (!expect(!firstMessageId.isEmpty(), "generated message id should not be empty"))
+        return 1;
+    const QByteArray encoded = ChatProtocol::encodeTextMessage(QStringLiteral("bv1-2"), QStringLiteral("你好，世界\nMercury"), firstMessageId);
     if (!expect(encoded.startsWith("MCHAT1 "), "encoded messages should declare payload size before JSON"))
         return 1;
 
@@ -31,9 +34,22 @@ int main(int argc, char **argv)
         return 1;
     if (!expect(messages.first().from == QStringLiteral("BV1-2"), "callsign should normalize to uppercase"))
         return 1;
+    if (!expect(messages.first().id == firstMessageId, "message id should round-trip"))
+        return 1;
     if (!expect(messages.first().text == QStringLiteral("你好，世界\nMercury"), "UTF-8 CJK text should round-trip"))
         return 1;
     if (!expect(buffer.isEmpty(), "buffer should be empty after complete decode"))
+        return 1;
+
+    const QByteArray ackEncoded = ChatProtocol::encodeAckMessage(QStringLiteral("TESTB"), firstMessageId);
+    messages = ChatProtocol::appendAndDecode(buffer, ackEncoded);
+    if (!expect(messages.size() == 1, "ack frame should decode one message"))
+        return 1;
+    if (!expect(messages.first().kind == ChatMessage::Kind::Ack, "ack frame should decode as ack"))
+        return 1;
+    if (!expect(messages.first().ackId == firstMessageId, "ack id should match the original message id"))
+        return 1;
+    if (!expect(messages.first().from == QStringLiteral("TESTB"), "ack sender should normalize"))
         return 1;
 
     const QByteArray legacyJsonLine = "{\"from\":\"TESTA\",\"text\":\"legacy\",\"time\":\"2026-01-01T00:00:00.000Z\",\"type\":\"msg\",\"v\":1}\n";
