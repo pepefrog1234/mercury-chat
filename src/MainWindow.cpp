@@ -570,6 +570,13 @@ void MainWindow::wireSignals()
 
     connect(tncConnectButton_, &QPushButton::clicked, this, &MainWindow::connectTnc);
     connect(stationInitButton_, &QPushButton::clicked, this, &MainWindow::initializeStation);
+    connect(callsignEdit_, &QLineEdit::editingFinished, this, [this]() {
+        callsignEdit_->setText(localCallsign());
+        markStationSettingsDirty();
+    });
+    connect(bandwidthCombo_, &QComboBox::currentIndexChanged, this, [this](int) {
+        markStationSettingsDirty();
+    });
     connect(connectCallsignButton_, &QPushButton::clicked, this, &MainWindow::connectEnteredCallsign);
     connect(peerCallsignEdit_, &QLineEdit::returnPressed, this, &MainWindow::connectEnteredCallsign);
     connect(peerCallsignEdit_, &QLineEdit::editingFinished, this, [this]() {
@@ -812,7 +819,11 @@ bool MainWindow::applyStationSettings(bool warnIfMissing)
         return false;
     }
 
-    tnc_.initializeStation(callsign, selectedBandwidth());
+    const int bandwidthHz = selectedBandwidth();
+    tnc_.initializeStation(callsign, bandwidthHz);
+    stationSettingsApplied_ = true;
+    stationAppliedCallsign_ = callsign;
+    stationAppliedBandwidthHz_ = bandwidthHz;
     saveSettings();
     return true;
 }
@@ -1108,7 +1119,10 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
 {
     tncConnectButton_->setText((controlConnected || dataConnected) ? QStringLiteral("Disconnect TNC") : QStringLiteral("Connect TNC"));
     if (controlConnected)
+    {
         tncRetryTimer_->stop();
+        autoInitializeStation();
+    }
     stationInitButton_->setEnabled(controlConnected);
     beaconSendButton_->setEnabled(controlConnected);
     connectBeaconButton_->setEnabled(controlConnected);
@@ -1116,6 +1130,9 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
     autoBeaconCheck_->setEnabled(controlConnected);
     if (!controlConnected)
     {
+        stationSettingsApplied_ = false;
+        stationAppliedCallsign_.clear();
+        stationAppliedBandwidthHz_ = 0;
         beaconTimer_->stop();
         if (arqConnected_ || linkPending_ || linkConnectedAt_.isValid())
             resetLinkStatus();
@@ -1166,6 +1183,39 @@ void MainWindow::appendStatusLine(const QString &text)
 {
     statusLog_->appendPlainText(QStringLiteral("[%1] %2").arg(utcTimeLabel(), text));
     statusLog_->verticalScrollBar()->setValue(statusLog_->verticalScrollBar()->maximum());
+}
+
+void MainWindow::autoInitializeStation()
+{
+    if (!tnc_.isControlConnected())
+        return;
+
+    const QString callsign = localCallsign();
+    const int bandwidthHz = selectedBandwidth();
+    if (callsign.isEmpty() || bandwidthHz <= 0)
+        return;
+
+    if (stationSettingsApplied_ &&
+        stationAppliedCallsign_ == callsign &&
+        stationAppliedBandwidthHz_ == bandwidthHz)
+    {
+        return;
+    }
+
+    tnc_.initializeStation(callsign, bandwidthHz);
+    stationSettingsApplied_ = true;
+    stationAppliedCallsign_ = callsign;
+    stationAppliedBandwidthHz_ = bandwidthHz;
+    appendStatusLine(QStringLiteral("Auto-initialized %1 at %2").arg(callsign, bandwidthLabel(bandwidthHz)));
+}
+
+void MainWindow::markStationSettingsDirty()
+{
+    stationSettingsApplied_ = false;
+    stationAppliedCallsign_.clear();
+    stationAppliedBandwidthHz_ = 0;
+    saveSettings();
+    autoInitializeStation();
 }
 
 void MainWindow::showPartialIncoming(const ChatPartialMessage &message)

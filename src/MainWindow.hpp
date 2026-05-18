@@ -69,6 +69,8 @@ private:
     void clearPartialIncoming();
     void insertTranscriptLine(const QString &line, int *blockNumber = nullptr);
     bool replaceTranscriptBlock(int blockNumber, const QString &line);
+    void autoInitializeStation();
+    void markStationSettingsDirty();
     void beginTransmitProgress(int totalBytes);
     void updateTransmitProgress(int remainingBytes);
     void setTransferIdle();
@@ -96,6 +98,9 @@ private:
     bool arqConnected_ = false;
     bool linkPending_ = false;
     bool beaconCommandAccepted_ = false;
+    bool stationSettingsApplied_ = false;
+    QString stationAppliedCallsign_;
+    int stationAppliedBandwidthHz_ = 0;
     bool partialRxVisible_ = false;
     int partialRxBlockNumber_ = -1;
     QString partialRxTimeLabel_;
