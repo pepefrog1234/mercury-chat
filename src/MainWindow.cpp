@@ -41,6 +41,11 @@ QString bandwidthLabel(int bandwidthHz)
     return QStringLiteral("%1 Hz").arg(bandwidthHz);
 }
 
+QString snrLabel(double snrDb, bool hasSnr)
+{
+    return hasSnr ? QStringLiteral("%1 dB").arg(snrDb, 0, 'f', 1) : QStringLiteral("-");
+}
+
 QString utcTimeLabel()
 {
     return QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
@@ -280,8 +285,8 @@ void MainWindow::buildUi()
     peerConnectLayout->addWidget(peerCallsignEdit_, 1);
     peerConnectLayout->addWidget(connectCallsignButton_);
 
-    beaconTable_ = new QTableWidget(0, 3, beaconGroup);
-    beaconTable_->setHorizontalHeaderLabels({QStringLiteral("Call"), QStringLiteral("BW"), QStringLiteral("Last heard")});
+    beaconTable_ = new QTableWidget(0, 4, beaconGroup);
+    beaconTable_->setHorizontalHeaderLabels({QStringLiteral("Call"), QStringLiteral("BW"), QStringLiteral("SNR"), QStringLiteral("Last heard")});
     beaconTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     beaconTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     beaconTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -661,6 +666,9 @@ void MainWindow::wireSignals()
         updateTransmitProgress(bytes);
     });
     connect(&tnc_, &TncClient::snrUpdated, this, [this](double snr) {
+        lastSnrDb_ = snr;
+        hasLastSnrDb_ = true;
+        lastSnrAt_ = QDateTime::currentDateTime();
         snrStatusLabel_->setText(QStringLiteral("%1 dB").arg(snr, 0, 'f', 1));
     });
     connect(&tnc_, &TncClient::bitrateUpdated, this, [this](int level, int bps) {
@@ -836,6 +844,14 @@ void MainWindow::initializeStation()
 
 void MainWindow::sendBeacon()
 {
+    if (arqConnected_)
+    {
+        beaconTimer_->stop();
+        appendSystemLine(QStringLiteral("Beacon not sent: ARQ link is active."));
+        updateLinkControls();
+        return;
+    }
+
     const QString callsign = localCallsign();
     if (callsign.isEmpty())
     {
@@ -980,8 +996,12 @@ void MainWindow::onBeaconReceived(const QString &callsign, int bandwidthHz)
     if (callsign.isEmpty() || callsign == localCallsign())
         return;
 
-    updateBeaconRow(callsign, bandwidthHz);
-    appendSystemLine(QStringLiteral("Beacon heard from %1 %2").arg(callsign, bandwidthLabel(bandwidthHz)));
+    const bool hasRecentSnr = hasLastSnrDb_ &&
+                              lastSnrAt_.isValid() &&
+                              lastSnrAt_.msecsTo(QDateTime::currentDateTime()) <= 15000;
+    updateBeaconRow(callsign, bandwidthHz, lastSnrDb_, hasRecentSnr);
+    appendSystemLine(QStringLiteral("Beacon heard from %1 %2, SNR %3")
+                         .arg(callsign, bandwidthLabel(bandwidthHz), snrLabel(lastSnrDb_, hasRecentSnr)));
 }
 
 void MainWindow::onLinkConnected(const QString &source, const QString &destination, int bandwidthHz)
@@ -1010,6 +1030,7 @@ void MainWindow::onLinkConnected(const QString &source, const QString &destinati
     bitrateStatusLabel_->setText(QStringLiteral("-"));
     updateLinkDuration();
     linkDurationTimer_->start();
+    beaconTimer_->stop();
     updateLinkControls();
     appendSystemLine(QStringLiteral("ARQ connected: %1 -> %2, %3").arg(source, destination, bandwidthLabel(bandwidthHz)));
 }
@@ -1104,9 +1125,22 @@ void MainWindow::updateLinkControls()
 {
     const bool controlConnected = tnc_.isControlConnected();
     const bool dataConnected = tnc_.isDataConnected();
+    const bool beaconAllowed = controlConnected && !arqConnected_;
 
     linkDisconnectButton_->setEnabled(controlConnected && arqConnected_);
     sendButton_->setEnabled(dataConnected && arqConnected_);
+    beaconSendButton_->setEnabled(beaconAllowed);
+    autoBeaconCheck_->setEnabled(beaconAllowed);
+    beaconIntervalSpin_->setEnabled(beaconAllowed);
+
+    if (!beaconAllowed)
+    {
+        beaconTimer_->stop();
+    }
+    else if (autoBeaconCheck_->isChecked() && !beaconTimer_->isActive())
+    {
+        beaconTimer_->start(beaconIntervalSpin_->value() * 1000);
+    }
 
     connectCallsignButton_->setText(arqConnected_ ? QStringLiteral("Disconnect") : QStringLiteral("Connect"));
     connectCallsignButton_->setEnabled(controlConnected);
@@ -1133,6 +1167,9 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
         stationSettingsApplied_ = false;
         stationAppliedCallsign_.clear();
         stationAppliedBandwidthHz_ = 0;
+        hasLastSnrDb_ = false;
+        lastSnrDb_ = 0.0;
+        lastSnrAt_ = {};
         beaconTimer_->stop();
         if (arqConnected_ || linkPending_ || linkConnectedAt_.isValid())
             resetLinkStatus();
@@ -1351,14 +1388,15 @@ void MainWindow::setTransferIdle()
     transferStatusLabel_->setText(QStringLiteral("Idle"));
 }
 
-void MainWindow::updateBeaconRow(const QString &callsign, int bandwidthHz)
+void MainWindow::updateBeaconRow(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr)
 {
     for (int row = 0; row < beaconTable_->rowCount(); ++row)
     {
         if (beaconTable_->item(row, 0)->text() == callsign)
         {
             beaconTable_->item(row, 1)->setText(QString::number(bandwidthHz));
-            beaconTable_->item(row, 2)->setText(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")));
+            beaconTable_->item(row, 2)->setText(snrLabel(snrDb, hasSnr));
+            beaconTable_->item(row, 3)->setText(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")));
             return;
         }
     }
@@ -1367,7 +1405,8 @@ void MainWindow::updateBeaconRow(const QString &callsign, int bandwidthHz)
     beaconTable_->insertRow(row);
     beaconTable_->setItem(row, 0, new QTableWidgetItem(callsign));
     beaconTable_->setItem(row, 1, new QTableWidgetItem(QString::number(bandwidthHz)));
-    beaconTable_->setItem(row, 2, new QTableWidgetItem(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"))));
+    beaconTable_->setItem(row, 2, new QTableWidgetItem(snrLabel(snrDb, hasSnr)));
+    beaconTable_->setItem(row, 3, new QTableWidgetItem(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"))));
 }
 
 bool MainWindow::setComboCurrentData(QComboBox *combo, const QVariant &value) const

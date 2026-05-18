@@ -74,7 +74,7 @@ private:
     void beginTransmitProgress(int totalBytes);
     void updateTransmitProgress(int remainingBytes);
     void setTransferIdle();
-    void updateBeaconRow(const QString &callsign, int bandwidthHz);
+    void updateBeaconRow(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr);
     bool applyStationSettings(bool warnIfMissing);
     bool connectCat(bool interactive);
     bool setComboCurrentData(QComboBox *combo, const QVariant &value) const;
@@ -101,6 +101,9 @@ private:
     bool stationSettingsApplied_ = false;
     QString stationAppliedCallsign_;
     int stationAppliedBandwidthHz_ = 0;
+    double lastSnrDb_ = 0.0;
+    bool hasLastSnrDb_ = false;
+    QDateTime lastSnrAt_;
     bool partialRxVisible_ = false;
     int partialRxBlockNumber_ = -1;
     QString partialRxTimeLabel_;
