@@ -73,6 +73,9 @@ private:
     void markStationSettingsDirty();
     void beginTransmitProgress(int totalBytes);
     void updateTransmitProgress(int remainingBytes);
+    void finishTransmitProgress();
+    void finishReceiveProgress();
+    void scheduleTransferIdle();
     void setTransferIdle();
     void updateBeaconRow(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr);
     bool applyStationSettings(bool warnIfMissing);
@@ -109,6 +112,7 @@ private:
     QString partialRxTimeLabel_;
     bool transmitProgressActive_ = false;
     bool transmitProgressSeenBuffer_ = false;
+    bool receiveProgressActive_ = false;
     int transmitProgressTotalBytes_ = 0;
     int lastBufferBytes_ = 0;
 
@@ -151,6 +155,7 @@ private:
     QTimer *beaconTimer_ = nullptr;
     QTimer *tncRetryTimer_ = nullptr;
     QTimer *linkDurationTimer_ = nullptr;
+    QTimer *transferIdleTimer_ = nullptr;
     int tncRetryAttempts_ = 0;
 
     QTextEdit *transcript_ = nullptr;

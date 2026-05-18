@@ -460,6 +460,9 @@ void MainWindow::buildUi()
     tncRetryTimer_->setInterval(2000);
     linkDurationTimer_ = new QTimer(this);
     linkDurationTimer_->setInterval(1000);
+    transferIdleTimer_ = new QTimer(this);
+    transferIdleTimer_->setSingleShot(true);
+    transferIdleTimer_->setInterval(2500);
 }
 
 void MainWindow::loadSettings()
@@ -612,6 +615,7 @@ void MainWindow::wireSignals()
     connect(beaconTimer_, &QTimer::timeout, this, &MainWindow::sendBeacon);
     connect(tncRetryTimer_, &QTimer::timeout, this, &MainWindow::retryTncConnection);
     connect(linkDurationTimer_, &QTimer::timeout, this, &MainWindow::updateLinkDuration);
+    connect(transferIdleTimer_, &QTimer::timeout, this, &MainWindow::setTransferIdle);
 
     connect(&tnc_, &TncClient::connectionStateChanged, this, &MainWindow::updateTncState);
     connect(&tnc_, &TncClient::statusMessage, this, [this](const QString &message) {
@@ -659,6 +663,8 @@ void MainWindow::wireSignals()
         pttStatusLabel_->setText(enabled ? QStringLiteral("PTT on") : QStringLiteral("PTT off"));
         if (catFollowPttCheck_->isChecked() && cat_.isConnected())
             cat_.setPtt(enabled);
+        if (!enabled && transmitProgressActive_)
+            finishTransmitProgress();
     });
     connect(&tnc_, &TncClient::bufferUpdated, this, [this](int bytes) {
         lastBufferBytes_ = bytes;
@@ -1047,6 +1053,7 @@ void MainWindow::onLinkDisconnected()
 void MainWindow::onDataReceived(const QByteArray &bytes)
 {
     const QList<ChatMessage> messages = ChatProtocol::appendAndDecode(chatRxBuffer_, bytes);
+    const bool decodedCompleteMessages = !messages.isEmpty();
     for (const ChatMessage &message : messages)
     {
         const QString speaker = message.from.isEmpty() ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_) : message.from;
@@ -1057,7 +1064,11 @@ void MainWindow::onDataReceived(const QByteArray &bytes)
     if (partial.active || partial.totalBytesKnown)
         showPartialIncoming(partial);
     else
+    {
         clearPartialIncoming();
+        if (decodedCompleteMessages && chatRxBuffer_.isEmpty())
+            finishReceiveProgress();
+    }
 }
 
 void MainWindow::connectOrDisconnectCat()
@@ -1200,9 +1211,7 @@ void MainWindow::appendIncomingTranscript(const QString &speaker, const QString 
         partialRxTimeLabel_.clear();
         if (!transmitProgressActive_)
         {
-            transferProgressBar_->setRange(0, 1);
-            transferProgressBar_->setValue(1);
-            transferStatusLabel_->setText(QStringLiteral("RX complete"));
+            finishReceiveProgress();
         }
         return;
     }
@@ -1259,6 +1268,8 @@ void MainWindow::showPartialIncoming(const ChatPartialMessage &message)
 {
     if (!transmitProgressActive_)
     {
+        transferIdleTimer_->stop();
+        receiveProgressActive_ = true;
         if (message.totalBytesKnown && message.totalBytes > 0)
         {
             transferProgressBar_->setRange(0, static_cast<int>(message.totalBytes));
@@ -1342,6 +1353,8 @@ void MainWindow::beginTransmitProgress(int totalBytes)
     transmitProgressActive_ = true;
     transmitProgressSeenBuffer_ = false;
     transmitProgressTotalBytes_ = qMax(lastBufferBytes_, 0) + totalBytes;
+    receiveProgressActive_ = false;
+    transferIdleTimer_->stop();
     transferProgressBar_->setRange(0, transmitProgressTotalBytes_);
     transferProgressBar_->setValue(0);
     transferStatusLabel_->setText(QStringLiteral("TX queued: %1 bytes").arg(transmitProgressTotalBytes_));
@@ -1364,10 +1377,7 @@ void MainWindow::updateTransmitProgress(int remainingBytes)
 
     if (clampedRemaining == 0)
     {
-        transferStatusLabel_->setText(QStringLiteral("TX complete"));
-        transmitProgressActive_ = false;
-        transmitProgressSeenBuffer_ = false;
-        transmitProgressTotalBytes_ = 0;
+        finishTransmitProgress();
         return;
     }
 
@@ -1378,11 +1388,42 @@ void MainWindow::updateTransmitProgress(int remainingBytes)
                                       .arg(transmitProgressTotalBytes_));
 }
 
+void MainWindow::finishTransmitProgress()
+{
+    const int totalBytes = qMax(transmitProgressTotalBytes_, 1);
+    transferProgressBar_->setRange(0, totalBytes);
+    transferProgressBar_->setValue(totalBytes);
+    transferStatusLabel_->setText(QStringLiteral("TX complete"));
+    transmitProgressActive_ = false;
+    transmitProgressSeenBuffer_ = false;
+    transmitProgressTotalBytes_ = 0;
+    scheduleTransferIdle();
+}
+
+void MainWindow::finishReceiveProgress()
+{
+    if (transmitProgressActive_)
+        return;
+
+    receiveProgressActive_ = false;
+    transferProgressBar_->setRange(0, 1);
+    transferProgressBar_->setValue(1);
+    transferStatusLabel_->setText(QStringLiteral("RX complete"));
+    scheduleTransferIdle();
+}
+
+void MainWindow::scheduleTransferIdle()
+{
+    transferIdleTimer_->start();
+}
+
 void MainWindow::setTransferIdle()
 {
     transmitProgressActive_ = false;
     transmitProgressSeenBuffer_ = false;
+    receiveProgressActive_ = false;
     transmitProgressTotalBytes_ = 0;
+    transferIdleTimer_->stop();
     transferProgressBar_->setRange(0, 1);
     transferProgressBar_->setValue(0);
     transferStatusLabel_->setText(QStringLiteral("Idle"));
