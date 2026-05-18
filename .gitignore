@@ -1,5 +1,6 @@
 build/
 build-*/
+dist/
 *.user
 *.swp
 .DS_Store

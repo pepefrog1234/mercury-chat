@@ -5,27 +5,34 @@
 #include "TncClient.hpp"
 
 #include <QByteArray>
+#include <QDateTime>
 #include <QMainWindow>
+#include <QString>
 
 class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QProgressBar;
 class QPushButton;
+class QSettings;
 class QSpinBox;
 class QTableWidget;
 class QTextEdit;
 class QTimer;
 class QCloseEvent;
 class QVariant;
+struct ChatPartialMessage;
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(const QString &settingsFile = {},
+                        const QString &profileName = {},
+                        QWidget *parent = nullptr);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -40,6 +47,8 @@ private slots:
     void stopModem();
     void retryTncConnection();
     void sendChatMessage();
+    void requestLinkDisconnect();
+    void updateLinkDuration();
     void onBeaconReceived(const QString &callsign, int bandwidthHz);
     void onLinkConnected(const QString &source, const QString &destination, int bandwidthHz);
     void onLinkDisconnected();
@@ -53,22 +62,47 @@ private:
     void loadSettings();
     void saveSettings() const;
     void appendTranscript(const QString &speaker, const QString &text);
+    void appendIncomingTranscript(const QString &speaker, const QString &text);
     void appendSystemLine(const QString &text);
     void appendStatusLine(const QString &text);
+    void showPartialIncoming(const ChatPartialMessage &message);
+    void clearPartialIncoming();
+    void insertTranscriptLine(const QString &line, int *blockNumber = nullptr);
+    bool replaceTranscriptBlock(int blockNumber, const QString &line);
+    void beginTransmitProgress(int totalBytes);
+    void updateTransmitProgress(int remainingBytes);
+    void setTransferIdle();
     void updateBeaconRow(const QString &callsign, int bandwidthHz);
     bool applyStationSettings(bool warnIfMissing);
     bool connectCat(bool interactive);
     bool setComboCurrentData(QComboBox *combo, const QVariant &value) const;
+    void resetLinkStatus();
+    void updateLinkControls();
     QString localCallsign() const;
     int selectedBandwidth() const;
+    QSettings *createSettings() const;
 
     TncClient tnc_;
     CatController cat_;
     ModemProcess modem_;
     QByteArray chatRxBuffer_;
+    QString settingsFile_;
+    QString profileName_;
     QString peerCallsign_;
+    QString linkSource_;
+    QString linkDestination_;
+    QDateTime linkConnectedAt_;
+    int linkBandwidthHz_ = 0;
     bool arqConnected_ = false;
+    bool linkPending_ = false;
     bool beaconCommandAccepted_ = false;
+    bool partialRxVisible_ = false;
+    int partialRxBlockNumber_ = -1;
+    QString partialRxTimeLabel_;
+    bool transmitProgressActive_ = false;
+    bool transmitProgressSeenBuffer_ = false;
+    int transmitProgressTotalBytes_ = 0;
+    int lastBufferBytes_ = 0;
 
     QLineEdit *modemPathEdit_ = nullptr;
     QLineEdit *modemArgsEdit_ = nullptr;
@@ -93,6 +127,9 @@ private:
     QPushButton *linkDisconnectButton_ = nullptr;
     QLabel *tncStatusLabel_ = nullptr;
     QLabel *linkStatusLabel_ = nullptr;
+    QLabel *peerStatusLabel_ = nullptr;
+    QLabel *linkDurationLabel_ = nullptr;
+    QLabel *linkBandwidthLabel_ = nullptr;
     QLabel *pttStatusLabel_ = nullptr;
     QLabel *bufferStatusLabel_ = nullptr;
     QLabel *snrStatusLabel_ = nullptr;
@@ -105,10 +142,13 @@ private:
     QPushButton *connectBeaconButton_ = nullptr;
     QTimer *beaconTimer_ = nullptr;
     QTimer *tncRetryTimer_ = nullptr;
+    QTimer *linkDurationTimer_ = nullptr;
     int tncRetryAttempts_ = 0;
 
     QTextEdit *transcript_ = nullptr;
     QPlainTextEdit *messageEdit_ = nullptr;
+    QLabel *transferStatusLabel_ = nullptr;
+    QProgressBar *transferProgressBar_ = nullptr;
     QPushButton *sendButton_ = nullptr;
     QPlainTextEdit *statusLog_ = nullptr;
 

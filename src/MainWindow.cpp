@@ -9,12 +9,14 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHeaderView>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QAudioDevice>
 #include <QMediaDevices>
 #include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QProcess>
 #include <QPushButton>
 #include <QScrollBar>
@@ -25,9 +27,12 @@
 #include <QStatusBar>
 #include <QTableWidget>
 #include <QTabWidget>
+#include <QTextBlock>
 #include <QTextEdit>
 #include <QTimer>
 #include <QVBoxLayout>
+
+#include <memory>
 
 namespace
 {
@@ -39,6 +44,30 @@ QString bandwidthLabel(int bandwidthHz)
 QString utcTimeLabel()
 {
     return QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
+}
+
+QString durationLabel(qint64 totalSeconds)
+{
+    if (totalSeconds < 0)
+        totalSeconds = 0;
+
+    const qint64 hours = totalSeconds / 3600;
+    const qint64 minutes = (totalSeconds / 60) % 60;
+    const qint64 seconds = totalSeconds % 60;
+    return QStringLiteral("%1:%2:%3")
+        .arg(hours, 2, 10, QLatin1Char('0'))
+        .arg(minutes, 2, 10, QLatin1Char('0'))
+        .arg(seconds, 2, 10, QLatin1Char('0'));
+}
+
+QString transcriptLine(const QString &speaker, const QString &text, const QString &timeLabel = utcTimeLabel())
+{
+    return QStringLiteral("[%1] %2: %3").arg(timeLabel, speaker, text);
+}
+
+QString systemTranscriptLine(const QString &text)
+{
+    return QStringLiteral("[%1] * %2").arg(utcTimeLabel(), text);
 }
 
 QVariant currentComboData(const QComboBox *combo, const QVariant &fallback = {})
@@ -74,13 +103,19 @@ void addAudioDeviceItems(QComboBox *combo, const QList<QAudioDevice> &devices)
 }
 }
 
-MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent)
+MainWindow::MainWindow(const QString &settingsFile, const QString &profileName, QWidget *parent)
+    : QMainWindow(parent),
+      settingsFile_(settingsFile),
+      profileName_(profileName)
 {
     buildUi();
     loadSettings();
     wireSignals();
-    setWindowTitle(QStringLiteral("Mercury Chat"));
+    setWindowTitle(profileName_.isEmpty()
+                       ? QStringLiteral("Mercury Chat")
+                       : QStringLiteral("Mercury Chat - %1").arg(profileName_));
+    if (!settingsFile_.isEmpty())
+        appendStatusLine(QStringLiteral("settings: %1").arg(settingsFile_));
     QTimer::singleShot(0, this, [this]() {
         if (catAutoConnectCheck_->isChecked())
             connectCat(false);
@@ -198,6 +233,9 @@ void MainWindow::buildUi()
     tncStatusLabel_ = new QLabel(QStringLiteral("Disconnected"), statusGroup);
     modemStatusLabel_ = new QLabel(QStringLiteral("Stopped"), statusGroup);
     linkStatusLabel_ = new QLabel(QStringLiteral("No ARQ link"), statusGroup);
+    peerStatusLabel_ = new QLabel(QStringLiteral("-"), statusGroup);
+    linkDurationLabel_ = new QLabel(QStringLiteral("-"), statusGroup);
+    linkBandwidthLabel_ = new QLabel(QStringLiteral("-"), statusGroup);
     pttStatusLabel_ = new QLabel(QStringLiteral("PTT off"), statusGroup);
     bufferStatusLabel_ = new QLabel(QStringLiteral("0 bytes"), statusGroup);
     snrStatusLabel_ = new QLabel(QStringLiteral("-"), statusGroup);
@@ -205,10 +243,13 @@ void MainWindow::buildUi()
     statusLayout->addRow(QStringLiteral("Modem"), modemStatusLabel_);
     statusLayout->addRow(QStringLiteral("TNC"), tncStatusLabel_);
     statusLayout->addRow(QStringLiteral("Link"), linkStatusLabel_);
-    statusLayout->addRow(QStringLiteral("PTT"), pttStatusLabel_);
-    statusLayout->addRow(QStringLiteral("Buffer"), bufferStatusLabel_);
+    statusLayout->addRow(QStringLiteral("Peer"), peerStatusLabel_);
+    statusLayout->addRow(QStringLiteral("Duration"), linkDurationLabel_);
+    statusLayout->addRow(QStringLiteral("Bandwidth"), linkBandwidthLabel_);
     statusLayout->addRow(QStringLiteral("SNR"), snrStatusLabel_);
     statusLayout->addRow(QStringLiteral("Bitrate"), bitrateStatusLabel_);
+    statusLayout->addRow(QStringLiteral("PTT"), pttStatusLabel_);
+    statusLayout->addRow(QStringLiteral("Buffer"), bufferStatusLabel_);
 
     auto *beaconGroup = new QGroupBox(QStringLiteral("Beacons"), leftPanel);
     auto *beaconLayout = new QVBoxLayout(beaconGroup);
@@ -369,11 +410,22 @@ void MainWindow::buildUi()
     messageEdit_ = new QPlainTextEdit(chatPage);
     messageEdit_->setPlaceholderText(QStringLiteral("Type UTF-8 text here"));
     messageEdit_->setFixedHeight(96);
+    transferStatusLabel_ = new QLabel(QStringLiteral("Idle"), chatPage);
+    transferProgressBar_ = new QProgressBar(chatPage);
+    transferProgressBar_->setRange(0, 1);
+    transferProgressBar_->setValue(0);
+    transferProgressBar_->setTextVisible(true);
+    auto *transferRow = new QWidget(chatPage);
+    auto *transferLayout = new QHBoxLayout(transferRow);
+    transferLayout->setContentsMargins(0, 0, 0, 0);
+    transferLayout->addWidget(transferStatusLabel_);
+    transferLayout->addWidget(transferProgressBar_, 1);
     sendButton_ = new QPushButton(QStringLiteral("Send"), chatPage);
     sendButton_->setEnabled(false);
 
     chatLayout->addWidget(transcript_, 1);
     chatLayout->addWidget(messageEdit_);
+    chatLayout->addWidget(transferRow);
     chatLayout->addWidget(sendButton_);
 
     auto *statusPage = new QWidget(mainTabs);
@@ -401,86 +453,88 @@ void MainWindow::buildUi()
     beaconTimer_ = new QTimer(this);
     tncRetryTimer_ = new QTimer(this);
     tncRetryTimer_->setInterval(2000);
+    linkDurationTimer_ = new QTimer(this);
+    linkDurationTimer_->setInterval(1000);
 }
 
 void MainWindow::loadSettings()
 {
-    QSettings settings;
+    std::unique_ptr<QSettings> settings(createSettings());
 
-    restoreGeometry(settings.value(QStringLiteral("window/geometry")).toByteArray());
+    restoreGeometry(settings->value(QStringLiteral("window/geometry")).toByteArray());
 
-    modemPathEdit_->setText(settings.value(QStringLiteral("modem/executable"), modemPathEdit_->text()).toString());
-    modemArgsEdit_->setText(settings.value(QStringLiteral("modem/args")).toString());
-    broadcastPortSpin_->setValue(settings.value(QStringLiteral("modem/broadcastPort"), broadcastPortSpin_->value()).toInt());
-    autoStartModemCheck_->setChecked(settings.value(QStringLiteral("modem/autoStart"), autoStartModemCheck_->isChecked()).toBool());
-    setComboCurrentData(soundSystemCombo_, settings.value(QStringLiteral("audio/soundSystem"), currentComboData(soundSystemCombo_, QStringLiteral("auto"))));
-    const QString inputDevice = settings.value(QStringLiteral("audio/inputDevice")).toString();
+    modemPathEdit_->setText(settings->value(QStringLiteral("modem/executable"), modemPathEdit_->text()).toString());
+    modemArgsEdit_->setText(settings->value(QStringLiteral("modem/args")).toString());
+    broadcastPortSpin_->setValue(settings->value(QStringLiteral("modem/broadcastPort"), broadcastPortSpin_->value()).toInt());
+    autoStartModemCheck_->setChecked(settings->value(QStringLiteral("modem/autoStart"), autoStartModemCheck_->isChecked()).toBool());
+    setComboCurrentData(soundSystemCombo_, settings->value(QStringLiteral("audio/soundSystem"), currentComboData(soundSystemCombo_, QStringLiteral("auto"))));
+    const QString inputDevice = settings->value(QStringLiteral("audio/inputDevice")).toString();
     if (!setComboCurrentData(inputDeviceCombo_, inputDevice))
         inputDeviceCombo_->setCurrentText(inputDevice);
-    const QString outputDevice = settings.value(QStringLiteral("audio/outputDevice")).toString();
+    const QString outputDevice = settings->value(QStringLiteral("audio/outputDevice")).toString();
     if (!setComboCurrentData(outputDeviceCombo_, outputDevice))
         outputDeviceCombo_->setCurrentText(outputDevice);
-    setComboCurrentData(captureChannelCombo_, settings.value(QStringLiteral("audio/captureChannel"), currentComboData(captureChannelCombo_, QStringLiteral("left"))));
+    setComboCurrentData(captureChannelCombo_, settings->value(QStringLiteral("audio/captureChannel"), currentComboData(captureChannelCombo_, QStringLiteral("left"))));
 
-    callsignEdit_->setText(settings.value(QStringLiteral("station/callsign")).toString());
-    peerCallsignEdit_->setText(settings.value(QStringLiteral("station/peerCallsign")).toString());
-    hostEdit_->setText(settings.value(QStringLiteral("tnc/host"), hostEdit_->text()).toString());
-    basePortSpin_->setValue(settings.value(QStringLiteral("tnc/basePort"), basePortSpin_->value()).toInt());
-    setComboCurrentData(bandwidthCombo_, settings.value(QStringLiteral("tnc/bandwidth"), selectedBandwidth()));
+    callsignEdit_->setText(settings->value(QStringLiteral("station/callsign")).toString());
+    peerCallsignEdit_->setText(settings->value(QStringLiteral("station/peerCallsign")).toString());
+    hostEdit_->setText(settings->value(QStringLiteral("tnc/host"), hostEdit_->text()).toString());
+    basePortSpin_->setValue(settings->value(QStringLiteral("tnc/basePort"), basePortSpin_->value()).toInt());
+    setComboCurrentData(bandwidthCombo_, settings->value(QStringLiteral("tnc/bandwidth"), selectedBandwidth()));
 
-    autoBeaconCheck_->setChecked(settings.value(QStringLiteral("beacon/auto"), autoBeaconCheck_->isChecked()).toBool());
-    beaconIntervalSpin_->setValue(settings.value(QStringLiteral("beacon/intervalSeconds"), beaconIntervalSpin_->value()).toInt());
+    autoBeaconCheck_->setChecked(settings->value(QStringLiteral("beacon/auto"), autoBeaconCheck_->isChecked()).toBool());
+    beaconIntervalSpin_->setValue(settings->value(QStringLiteral("beacon/intervalSeconds"), beaconIntervalSpin_->value()).toInt());
 
-    setComboCurrentData(catModelCombo_, settings.value(QStringLiteral("cat/modelId"), currentComboData(catModelCombo_, 0)));
-    catDeviceEdit_->setText(settings.value(QStringLiteral("cat/device")).toString());
-    const QString savedBaud = settings.value(QStringLiteral("cat/baud"), catBaudCombo_->currentText()).toString();
+    setComboCurrentData(catModelCombo_, settings->value(QStringLiteral("cat/modelId"), currentComboData(catModelCombo_, 0)));
+    catDeviceEdit_->setText(settings->value(QStringLiteral("cat/device")).toString());
+    const QString savedBaud = settings->value(QStringLiteral("cat/baud"), catBaudCombo_->currentText()).toString();
     if (!setComboCurrentData(catBaudCombo_, savedBaud.toInt()))
         catBaudCombo_->setCurrentText(savedBaud);
-    setComboCurrentData(catRtsCombo_, settings.value(QStringLiteral("cat/rts"), currentComboData(catRtsCombo_, 0)));
-    setComboCurrentData(catDtrCombo_, settings.value(QStringLiteral("cat/dtr"), currentComboData(catDtrCombo_, 0)));
-    setComboCurrentData(catPttMethodCombo_, settings.value(QStringLiteral("cat/pttMethod"), currentComboData(catPttMethodCombo_, 0)));
-    catAutoConnectCheck_->setChecked(settings.value(QStringLiteral("cat/autoConnect"), catAutoConnectCheck_->isChecked()).toBool());
-    catFollowPttCheck_->setChecked(settings.value(QStringLiteral("cat/followModemPtt"), catFollowPttCheck_->isChecked()).toBool());
-    catFrequencyEdit_->setText(settings.value(QStringLiteral("cat/frequencyHz"), catFrequencyEdit_->text()).toString());
+    setComboCurrentData(catRtsCombo_, settings->value(QStringLiteral("cat/rts"), currentComboData(catRtsCombo_, 0)));
+    setComboCurrentData(catDtrCombo_, settings->value(QStringLiteral("cat/dtr"), currentComboData(catDtrCombo_, 0)));
+    setComboCurrentData(catPttMethodCombo_, settings->value(QStringLiteral("cat/pttMethod"), currentComboData(catPttMethodCombo_, 0)));
+    catAutoConnectCheck_->setChecked(settings->value(QStringLiteral("cat/autoConnect"), catAutoConnectCheck_->isChecked()).toBool());
+    catFollowPttCheck_->setChecked(settings->value(QStringLiteral("cat/followModemPtt"), catFollowPttCheck_->isChecked()).toBool());
+    catFrequencyEdit_->setText(settings->value(QStringLiteral("cat/frequencyHz"), catFrequencyEdit_->text()).toString());
 
-    if (settings.value(QStringLiteral("window/geometry")).isNull())
+    if (settings->value(QStringLiteral("window/geometry")).isNull())
         resize(1180, 760);
 }
 
 void MainWindow::saveSettings() const
 {
-    QSettings settings;
+    std::unique_ptr<QSettings> settings(createSettings());
 
-    settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
+    settings->setValue(QStringLiteral("window/geometry"), saveGeometry());
 
-    settings.setValue(QStringLiteral("modem/executable"), modemPathEdit_->text().trimmed());
-    settings.setValue(QStringLiteral("modem/args"), modemArgsEdit_->text());
-    settings.setValue(QStringLiteral("modem/broadcastPort"), broadcastPortSpin_->value());
-    settings.setValue(QStringLiteral("modem/autoStart"), autoStartModemCheck_->isChecked());
-    settings.setValue(QStringLiteral("audio/soundSystem"), currentComboData(soundSystemCombo_, QStringLiteral("auto")));
-    settings.setValue(QStringLiteral("audio/inputDevice"), comboValue(inputDeviceCombo_));
-    settings.setValue(QStringLiteral("audio/outputDevice"), comboValue(outputDeviceCombo_));
-    settings.setValue(QStringLiteral("audio/captureChannel"), currentComboData(captureChannelCombo_, QStringLiteral("left")));
+    settings->setValue(QStringLiteral("modem/executable"), modemPathEdit_->text().trimmed());
+    settings->setValue(QStringLiteral("modem/args"), modemArgsEdit_->text());
+    settings->setValue(QStringLiteral("modem/broadcastPort"), broadcastPortSpin_->value());
+    settings->setValue(QStringLiteral("modem/autoStart"), autoStartModemCheck_->isChecked());
+    settings->setValue(QStringLiteral("audio/soundSystem"), currentComboData(soundSystemCombo_, QStringLiteral("auto")));
+    settings->setValue(QStringLiteral("audio/inputDevice"), comboValue(inputDeviceCombo_));
+    settings->setValue(QStringLiteral("audio/outputDevice"), comboValue(outputDeviceCombo_));
+    settings->setValue(QStringLiteral("audio/captureChannel"), currentComboData(captureChannelCombo_, QStringLiteral("left")));
 
-    settings.setValue(QStringLiteral("station/callsign"), localCallsign());
-    settings.setValue(QStringLiteral("station/peerCallsign"), ChatProtocol::normalizeCallsign(peerCallsignEdit_->text()));
-    settings.setValue(QStringLiteral("tnc/host"), hostEdit_->text().trimmed());
-    settings.setValue(QStringLiteral("tnc/basePort"), basePortSpin_->value());
-    settings.setValue(QStringLiteral("tnc/bandwidth"), selectedBandwidth());
+    settings->setValue(QStringLiteral("station/callsign"), localCallsign());
+    settings->setValue(QStringLiteral("station/peerCallsign"), ChatProtocol::normalizeCallsign(peerCallsignEdit_->text()));
+    settings->setValue(QStringLiteral("tnc/host"), hostEdit_->text().trimmed());
+    settings->setValue(QStringLiteral("tnc/basePort"), basePortSpin_->value());
+    settings->setValue(QStringLiteral("tnc/bandwidth"), selectedBandwidth());
 
-    settings.setValue(QStringLiteral("beacon/auto"), autoBeaconCheck_->isChecked());
-    settings.setValue(QStringLiteral("beacon/intervalSeconds"), beaconIntervalSpin_->value());
+    settings->setValue(QStringLiteral("beacon/auto"), autoBeaconCheck_->isChecked());
+    settings->setValue(QStringLiteral("beacon/intervalSeconds"), beaconIntervalSpin_->value());
 
-    settings.setValue(QStringLiteral("cat/modelId"), currentComboData(catModelCombo_, 0));
-    settings.setValue(QStringLiteral("cat/device"), catDeviceEdit_->text().trimmed());
-    settings.setValue(QStringLiteral("cat/baud"), catBaudCombo_->currentText().trimmed());
-    settings.setValue(QStringLiteral("cat/rts"), currentComboData(catRtsCombo_, 0));
-    settings.setValue(QStringLiteral("cat/dtr"), currentComboData(catDtrCombo_, 0));
-    settings.setValue(QStringLiteral("cat/pttMethod"), currentComboData(catPttMethodCombo_, 0));
-    settings.setValue(QStringLiteral("cat/autoConnect"), catAutoConnectCheck_->isChecked());
-    settings.setValue(QStringLiteral("cat/followModemPtt"), catFollowPttCheck_->isChecked());
-    settings.setValue(QStringLiteral("cat/frequencyHz"), catFrequencyEdit_->text().trimmed());
-    settings.sync();
+    settings->setValue(QStringLiteral("cat/modelId"), currentComboData(catModelCombo_, 0));
+    settings->setValue(QStringLiteral("cat/device"), catDeviceEdit_->text().trimmed());
+    settings->setValue(QStringLiteral("cat/baud"), catBaudCombo_->currentText().trimmed());
+    settings->setValue(QStringLiteral("cat/rts"), currentComboData(catRtsCombo_, 0));
+    settings->setValue(QStringLiteral("cat/dtr"), currentComboData(catDtrCombo_, 0));
+    settings->setValue(QStringLiteral("cat/pttMethod"), currentComboData(catPttMethodCombo_, 0));
+    settings->setValue(QStringLiteral("cat/autoConnect"), catAutoConnectCheck_->isChecked());
+    settings->setValue(QStringLiteral("cat/followModemPtt"), catFollowPttCheck_->isChecked());
+    settings->setValue(QStringLiteral("cat/frequencyHz"), catFrequencyEdit_->text().trimmed());
+    settings->sync();
 }
 
 void MainWindow::wireSignals()
@@ -521,7 +575,7 @@ void MainWindow::wireSignals()
     connect(peerCallsignEdit_, &QLineEdit::editingFinished, this, [this]() {
         saveSettings();
     });
-    connect(linkDisconnectButton_, &QPushButton::clicked, &tnc_, &TncClient::disconnectLink);
+    connect(linkDisconnectButton_, &QPushButton::clicked, this, &MainWindow::requestLinkDisconnect);
     connect(beaconSendButton_, &QPushButton::clicked, this, &MainWindow::sendBeacon);
     connect(connectBeaconButton_, &QPushButton::clicked, this, &MainWindow::connectSelectedBeacon);
     connect(beaconTable_, &QTableWidget::cellDoubleClicked, this, [this](int, int) {
@@ -545,6 +599,7 @@ void MainWindow::wireSignals()
     });
     connect(beaconTimer_, &QTimer::timeout, this, &MainWindow::sendBeacon);
     connect(tncRetryTimer_, &QTimer::timeout, this, &MainWindow::retryTncConnection);
+    connect(linkDurationTimer_, &QTimer::timeout, this, &MainWindow::updateLinkDuration);
 
     connect(&tnc_, &TncClient::connectionStateChanged, this, &MainWindow::updateTncState);
     connect(&tnc_, &TncClient::statusMessage, this, [this](const QString &message) {
@@ -576,7 +631,9 @@ void MainWindow::wireSignals()
     connect(&tnc_, &TncClient::linkConnected, this, &MainWindow::onLinkConnected);
     connect(&tnc_, &TncClient::linkDisconnected, this, &MainWindow::onLinkDisconnected);
     connect(&tnc_, &TncClient::pendingChanged, this, [this](bool pending) {
-        linkStatusLabel_->setText(pending ? QStringLiteral("Pending") : QStringLiteral("Idle"));
+        linkPending_ = pending;
+        if (!arqConnected_)
+            linkStatusLabel_->setText(pending ? QStringLiteral("Pending") : QStringLiteral("No ARQ link"));
         if (beaconCommandAccepted_)
         {
             appendSystemLine(pending ? QStringLiteral("Beacon transmission started")
@@ -584,6 +641,7 @@ void MainWindow::wireSignals()
             if (!pending)
                 beaconCommandAccepted_ = false;
         }
+        updateLinkControls();
     });
     connect(&tnc_, &TncClient::pttChanged, this, [this](bool enabled) {
         pttStatusLabel_->setText(enabled ? QStringLiteral("PTT on") : QStringLiteral("PTT off"));
@@ -591,7 +649,9 @@ void MainWindow::wireSignals()
             cat_.setPtt(enabled);
     });
     connect(&tnc_, &TncClient::bufferUpdated, this, [this](int bytes) {
+        lastBufferBytes_ = bytes;
         bufferStatusLabel_->setText(QStringLiteral("%1 bytes").arg(bytes));
+        updateTransmitProgress(bytes);
     });
     connect(&tnc_, &TncClient::snrUpdated, this, [this](double snr) {
         snrStatusLabel_->setText(QStringLiteral("%1 dB").arg(snr, 0, 'f', 1));
@@ -673,6 +733,7 @@ void MainWindow::stopModem()
 {
     if (tnc_.isControlConnected() || tnc_.isDataConnected())
         tnc_.disconnectFromModem();
+    resetLinkStatus();
     modem_.stop();
 }
 
@@ -684,12 +745,35 @@ void MainWindow::connectTnc()
     {
         tncRetryTimer_->stop();
         tnc_.disconnectFromModem();
+        resetLinkStatus();
         return;
     }
 
     tncRetryAttempts_ = 0;
     tncRetryTimer_->start();
     tnc_.connectToModem(hostEdit_->text().trimmed(), static_cast<quint16>(basePortSpin_->value()));
+}
+
+void MainWindow::requestLinkDisconnect()
+{
+    if (!tnc_.isControlConnected())
+        return;
+
+    tnc_.disconnectLink();
+    linkStatusLabel_->setText(arqConnected_ ? QStringLiteral("Disconnecting") : QStringLiteral("No ARQ link"));
+    appendSystemLine(QStringLiteral("Disconnect requested"));
+    updateLinkControls();
+}
+
+void MainWindow::updateLinkDuration()
+{
+    if (!arqConnected_ || !linkConnectedAt_.isValid())
+    {
+        linkDurationLabel_->setText(QStringLiteral("-"));
+        return;
+    }
+
+    linkDurationLabel_->setText(durationLabel(linkConnectedAt_.secsTo(QDateTime::currentDateTime())));
 }
 
 void MainWindow::retryTncConnection()
@@ -769,6 +853,12 @@ void MainWindow::sendBeacon()
 
 void MainWindow::connectSelectedBeacon()
 {
+    if (arqConnected_)
+    {
+        requestLinkDisconnect();
+        return;
+    }
+
     const QList<QTableWidgetItem *> selected = beaconTable_->selectedItems();
     if (selected.isEmpty())
         return;
@@ -797,12 +887,23 @@ void MainWindow::connectSelectedBeacon()
     if (!applyStationSettings(false))
         return;
 
+    peerCallsign_ = target;
+    peerStatusLabel_->setText(peerCallsign_);
+    linkStatusLabel_->setText(QStringLiteral("Calling %1").arg(target));
+    updateLinkControls();
+
     tnc_.connectPeer(callsign, target);
     appendSystemLine(QStringLiteral("Connecting %1 -> %2").arg(callsign, target));
 }
 
 void MainWindow::connectEnteredCallsign()
 {
+    if (arqConnected_)
+    {
+        requestLinkDisconnect();
+        return;
+    }
+
     const QString target = ChatProtocol::normalizeCallsign(peerCallsignEdit_->text());
     peerCallsignEdit_->setText(target);
     saveSettings();
@@ -840,6 +941,11 @@ void MainWindow::connectEnteredCallsign()
     if (!applyStationSettings(false))
         return;
 
+    peerCallsign_ = target;
+    peerStatusLabel_->setText(peerCallsign_);
+    linkStatusLabel_->setText(QStringLiteral("Calling %1").arg(target));
+    updateLinkControls();
+
     tnc_.connectPeer(callsign, target);
     appendSystemLine(QStringLiteral("Connecting %1 -> %2").arg(callsign, target));
 }
@@ -851,7 +957,9 @@ void MainWindow::sendChatMessage()
         return;
 
     const QString callsign = localCallsign();
-    tnc_.sendPayload(ChatProtocol::encodeTextMessage(callsign, text));
+    const QByteArray payload = ChatProtocol::encodeTextMessage(callsign, text);
+    beginTransmitProgress(payload.size());
+    tnc_.sendPayload(payload);
     appendTranscript(callsign, text);
     messageEdit_->clear();
 }
@@ -868,22 +976,40 @@ void MainWindow::onBeaconReceived(const QString &callsign, int bandwidthHz)
 void MainWindow::onLinkConnected(const QString &source, const QString &destination, int bandwidthHz)
 {
     arqConnected_ = true;
+    linkPending_ = false;
+    linkSource_ = source;
+    linkDestination_ = destination;
+    linkBandwidthHz_ = bandwidthHz;
+    linkConnectedAt_ = QDateTime::currentDateTime();
+
     const QString local = localCallsign();
-    peerCallsign_ = (source == local) ? destination : source;
-    linkStatusLabel_->setText(QStringLiteral("Connected to %1 (%2)").arg(peerCallsign_, bandwidthLabel(bandwidthHz)));
-    linkDisconnectButton_->setEnabled(true);
-    sendButton_->setEnabled(true);
+    if (source == local)
+        peerCallsign_ = destination;
+    else if (destination == local)
+        peerCallsign_ = source;
+    else
+        peerCallsign_ = source.isEmpty() ? destination : source;
+
+    peerStatusLabel_->setText(peerCallsign_.isEmpty() ? QStringLiteral("-") : peerCallsign_);
+    if (!peerCallsign_.isEmpty())
+        peerCallsignEdit_->setText(peerCallsign_);
+    linkStatusLabel_->setText(QStringLiteral("Connected (%1 -> %2)").arg(source, destination));
+    linkBandwidthLabel_->setText(bandwidthLabel(bandwidthHz));
+    snrStatusLabel_->setText(QStringLiteral("Waiting"));
+    bitrateStatusLabel_->setText(QStringLiteral("-"));
+    updateLinkDuration();
+    linkDurationTimer_->start();
+    updateLinkControls();
     appendSystemLine(QStringLiteral("ARQ connected: %1 -> %2, %3").arg(source, destination, bandwidthLabel(bandwidthHz)));
 }
 
 void MainWindow::onLinkDisconnected()
 {
-    arqConnected_ = false;
-    peerCallsign_.clear();
-    linkStatusLabel_->setText(QStringLiteral("No ARQ link"));
-    linkDisconnectButton_->setEnabled(false);
-    sendButton_->setEnabled(false);
+    const QString oldPeer = peerCallsign_;
+    resetLinkStatus();
     appendSystemLine(QStringLiteral("ARQ disconnected"));
+    if (!oldPeer.isEmpty())
+        appendStatusLine(QStringLiteral("Link with %1 closed").arg(oldPeer));
 }
 
 void MainWindow::onDataReceived(const QByteArray &bytes)
@@ -892,8 +1018,14 @@ void MainWindow::onDataReceived(const QByteArray &bytes)
     for (const ChatMessage &message : messages)
     {
         const QString speaker = message.from.isEmpty() ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_) : message.from;
-        appendTranscript(speaker, message.text);
+        appendIncomingTranscript(speaker, message.text);
     }
+
+    const ChatPartialMessage partial = ChatProtocol::previewIncompleteMessage(chatRxBuffer_);
+    if (partial.active || partial.totalBytesKnown)
+        showPartialIncoming(partial);
+    else
+        clearPartialIncoming();
 }
 
 void MainWindow::connectOrDisconnectCat()
@@ -932,6 +1064,46 @@ bool MainWindow::connectCat(bool interactive)
     return cat_.isConnected();
 }
 
+void MainWindow::resetLinkStatus()
+{
+    arqConnected_ = false;
+    linkPending_ = false;
+    peerCallsign_.clear();
+    linkSource_.clear();
+    linkDestination_.clear();
+    linkConnectedAt_ = {};
+    linkBandwidthHz_ = 0;
+    linkDurationTimer_->stop();
+
+    linkStatusLabel_->setText(QStringLiteral("No ARQ link"));
+    peerStatusLabel_->setText(QStringLiteral("-"));
+    linkDurationLabel_->setText(QStringLiteral("-"));
+    linkBandwidthLabel_->setText(QStringLiteral("-"));
+    snrStatusLabel_->setText(QStringLiteral("-"));
+    bitrateStatusLabel_->setText(QStringLiteral("-"));
+    bufferStatusLabel_->setText(QStringLiteral("0 bytes"));
+    lastBufferBytes_ = 0;
+    chatRxBuffer_.clear();
+    clearPartialIncoming();
+    setTransferIdle();
+    updateLinkControls();
+}
+
+void MainWindow::updateLinkControls()
+{
+    const bool controlConnected = tnc_.isControlConnected();
+    const bool dataConnected = tnc_.isDataConnected();
+
+    linkDisconnectButton_->setEnabled(controlConnected && arqConnected_);
+    sendButton_->setEnabled(dataConnected && arqConnected_);
+
+    connectCallsignButton_->setText(arqConnected_ ? QStringLiteral("Disconnect") : QStringLiteral("Connect"));
+    connectCallsignButton_->setEnabled(controlConnected);
+
+    connectBeaconButton_->setText(arqConnected_ ? QStringLiteral("Disconnect Link") : QStringLiteral("Connect Selected"));
+    connectBeaconButton_->setEnabled(controlConnected);
+}
+
 void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
 {
     tncConnectButton_->setText((controlConnected || dataConnected) ? QStringLiteral("Disconnect TNC") : QStringLiteral("Connect TNC"));
@@ -945,6 +1117,8 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
     if (!controlConnected)
     {
         beaconTimer_->stop();
+        if (arqConnected_ || linkPending_ || linkConnectedAt_.isValid())
+            resetLinkStatus();
     }
     else if (autoBeaconCheck_->isChecked() && !beaconTimer_->isActive())
     {
@@ -954,26 +1128,177 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
     tncStatusLabel_->setText(QStringLiteral("Control %1, data %2")
                                  .arg(controlConnected ? QStringLiteral("on") : QStringLiteral("off"),
                                       dataConnected ? QStringLiteral("on") : QStringLiteral("off")));
+    updateLinkControls();
 }
 
 void MainWindow::appendTranscript(const QString &speaker, const QString &text)
 {
-    transcript_->moveCursor(QTextCursor::End);
-    transcript_->insertPlainText(QStringLiteral("[%1] %2: %3\n").arg(utcTimeLabel(), speaker, text));
-    transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
+    insertTranscriptLine(transcriptLine(speaker, text));
+}
+
+void MainWindow::appendIncomingTranscript(const QString &speaker, const QString &text)
+{
+    const QString line = transcriptLine(speaker, text, partialRxVisible_ ? partialRxTimeLabel_ : utcTimeLabel());
+    if (partialRxVisible_ && replaceTranscriptBlock(partialRxBlockNumber_, line))
+    {
+        partialRxVisible_ = false;
+        partialRxBlockNumber_ = -1;
+        partialRxTimeLabel_.clear();
+        if (!transmitProgressActive_)
+        {
+            transferProgressBar_->setRange(0, 1);
+            transferProgressBar_->setValue(1);
+            transferStatusLabel_->setText(QStringLiteral("RX complete"));
+        }
+        return;
+    }
+
+    clearPartialIncoming();
+    insertTranscriptLine(line);
 }
 
 void MainWindow::appendSystemLine(const QString &text)
 {
-    transcript_->moveCursor(QTextCursor::End);
-    transcript_->insertPlainText(QStringLiteral("[%1] * %2\n").arg(utcTimeLabel(), text));
-    transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
+    insertTranscriptLine(systemTranscriptLine(text));
 }
 
 void MainWindow::appendStatusLine(const QString &text)
 {
     statusLog_->appendPlainText(QStringLiteral("[%1] %2").arg(utcTimeLabel(), text));
     statusLog_->verticalScrollBar()->setValue(statusLog_->verticalScrollBar()->maximum());
+}
+
+void MainWindow::showPartialIncoming(const ChatPartialMessage &message)
+{
+    if (!transmitProgressActive_)
+    {
+        if (message.totalBytesKnown && message.totalBytes > 0)
+        {
+            transferProgressBar_->setRange(0, static_cast<int>(message.totalBytes));
+            transferProgressBar_->setValue(static_cast<int>(qMin(message.bytesBuffered, message.totalBytes)));
+            transferStatusLabel_->setText(QStringLiteral("RX %1/%2 bytes")
+                                              .arg(message.bytesBuffered)
+                                              .arg(message.totalBytes));
+        }
+        else if (message.active)
+        {
+            transferProgressBar_->setRange(0, 0);
+            transferStatusLabel_->setText(QStringLiteral("RX %1 bytes").arg(message.bytesBuffered));
+        }
+    }
+
+    if (!message.active)
+        return;
+
+    const QString speaker = message.from.isEmpty()
+                                ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_)
+                                : message.from;
+
+    if (!partialRxVisible_)
+        partialRxTimeLabel_ = utcTimeLabel();
+
+    const QString line = transcriptLine(speaker, message.text, partialRxTimeLabel_);
+    if (partialRxVisible_)
+    {
+        if (!replaceTranscriptBlock(partialRxBlockNumber_, line))
+        {
+            partialRxVisible_ = false;
+            partialRxBlockNumber_ = -1;
+        }
+    }
+
+    if (!partialRxVisible_)
+    {
+        insertTranscriptLine(line, &partialRxBlockNumber_);
+        partialRxVisible_ = true;
+    }
+
+}
+
+void MainWindow::clearPartialIncoming()
+{
+    partialRxVisible_ = false;
+    partialRxBlockNumber_ = -1;
+    partialRxTimeLabel_.clear();
+}
+
+void MainWindow::insertTranscriptLine(const QString &line, int *blockNumber)
+{
+    transcript_->moveCursor(QTextCursor::End);
+    if (blockNumber)
+        *blockNumber = transcript_->document()->blockCount() - 1;
+    transcript_->insertPlainText(line + QLatin1Char('\n'));
+    transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
+}
+
+bool MainWindow::replaceTranscriptBlock(int blockNumber, const QString &line)
+{
+    if (blockNumber < 0)
+        return false;
+
+    const QTextBlock block = transcript_->document()->findBlockByNumber(blockNumber);
+    if (!block.isValid())
+        return false;
+
+    QTextCursor cursor(block);
+    cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    cursor.insertText(line);
+    transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
+    return true;
+}
+
+void MainWindow::beginTransmitProgress(int totalBytes)
+{
+    if (totalBytes <= 0)
+        return;
+
+    transmitProgressActive_ = true;
+    transmitProgressSeenBuffer_ = false;
+    transmitProgressTotalBytes_ = qMax(lastBufferBytes_, 0) + totalBytes;
+    transferProgressBar_->setRange(0, transmitProgressTotalBytes_);
+    transferProgressBar_->setValue(0);
+    transferStatusLabel_->setText(QStringLiteral("TX queued: %1 bytes").arg(transmitProgressTotalBytes_));
+}
+
+void MainWindow::updateTransmitProgress(int remainingBytes)
+{
+    if (!transmitProgressActive_ || transmitProgressTotalBytes_ <= 0)
+        return;
+
+    const int clampedRemaining = qBound(0, remainingBytes, transmitProgressTotalBytes_);
+    if (remainingBytes > 0)
+        transmitProgressSeenBuffer_ = true;
+    if (clampedRemaining == 0 && !transmitProgressSeenBuffer_)
+        return;
+
+    const int sentBytes = transmitProgressTotalBytes_ - clampedRemaining;
+    transferProgressBar_->setRange(0, transmitProgressTotalBytes_);
+    transferProgressBar_->setValue(sentBytes);
+
+    if (clampedRemaining == 0)
+    {
+        transferStatusLabel_->setText(QStringLiteral("TX complete"));
+        transmitProgressActive_ = false;
+        transmitProgressSeenBuffer_ = false;
+        transmitProgressTotalBytes_ = 0;
+        return;
+    }
+
+    const int percent = (sentBytes * 100) / transmitProgressTotalBytes_;
+    transferStatusLabel_->setText(QStringLiteral("TX %1% (%2/%3 bytes)")
+                                      .arg(percent)
+                                      .arg(sentBytes)
+                                      .arg(transmitProgressTotalBytes_));
+}
+
+void MainWindow::setTransferIdle()
+{
+    transmitProgressActive_ = false;
+    transmitProgressSeenBuffer_ = false;
+    transmitProgressTotalBytes_ = 0;
+    transferProgressBar_->setRange(0, 1);
+    transferProgressBar_->setValue(0);
+    transferStatusLabel_->setText(QStringLiteral("Idle"));
 }
 
 void MainWindow::updateBeaconRow(const QString &callsign, int bandwidthHz)
@@ -1006,6 +1331,14 @@ bool MainWindow::setComboCurrentData(QComboBox *combo, const QVariant &value) co
 
     combo->setCurrentIndex(index);
     return true;
+}
+
+QSettings *MainWindow::createSettings() const
+{
+    if (!settingsFile_.isEmpty())
+        return new QSettings(settingsFile_, QSettings::IniFormat);
+
+    return new QSettings();
 }
 
 QString MainWindow::localCallsign() const

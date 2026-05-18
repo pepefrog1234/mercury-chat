@@ -28,15 +28,25 @@ The main `Chat` tab is kept for chat text plus beacon and link activity. Mercury
 
 Operator settings are saved with Qt's platform settings store under `Rhizomatica/MercuryChat`. Saved fields include callsign, last remote callsign, TNC host/ports, modem path/arguments, audio input/output device, sound system, RX channel, beacon interval, selected bandwidth, CAT radio, serial port, baud rate, RTS/DTR states, PTT method, and window geometry.
 
+For local A/B loopback testing, Mercury Chat can also use explicit INI settings files:
+
+```sh
+./mercury-chat/build/mercury-chat --profile A --settings-file mercury-chat/profiles/a.ini
+./mercury-chat/build/mercury-chat --profile B --settings-file mercury-chat/profiles/b.ini
+```
+
+The helper scripts `mercury-chat/tools/run-a.sh`, `mercury-chat/tools/run-b.sh`, and `mercury-chat/tools/run-ab.sh` launch the preconfigured BlackHole loopback profiles. Profile A uses callsign `TESTA` with ARQ base port `8300`; profile B uses callsign `TESTB` with ARQ base port `8400`.
+
 ## Chat Payload Format
 
-Chat messages are UTF-8 JSON Lines on Mercury's ARQ data port:
+Chat messages are length-prefixed UTF-8 JSON frames on Mercury's ARQ data port. Each frame starts with an ASCII header declaring the JSON payload byte length, followed by the compact JSON payload:
 
-```json
+```text
+MCHAT1 86
 {"v":1,"type":"msg","from":"BV1AAA","time":"2026-05-16T02:00:00.000Z","text":"你好"}
 ```
 
-The newline is only the message delimiter; newlines inside text are JSON-escaped. This keeps CJK text as UTF-8 and still allows future fields such as delivery receipts.
+The header lets the receiver know the total message size before the text has fully arrived, so the GUI can show receive progress while still previewing already decoded UTF-8 text. Newlines inside text are JSON-escaped. The decoder still accepts the older newline-delimited JSON format for compatibility.
 
 ## Build
 
