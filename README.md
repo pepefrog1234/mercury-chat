@@ -52,10 +52,10 @@ Received messages with an `id` are acknowledged with a compact `ack` frame:
 
 ```text
 MCHAT1 <payload-bytes>
-{"v":1,"type":"ack","ack":"2f7c5d9b-2a9b-4de4-a15c-7d4a76aa61f3","from":"BV1BBB","time":"2026-05-16T02:00:01.000Z"}
+{"v":1,"type":"ack","ack":"2f7c5d9b-2a9b-4de4-a15c-7d4a76aa61f3","chars":2,"from":"BV1BBB","time":"2026-05-16T02:00:01.000Z"}
 ```
 
-The sender marks a local chat line as delivered only after receiving the matching acknowledgement.
+The `chars` field reports how many decoded UTF-16 text units the receiver has seen so far. The sender marks that prefix of the local chat line as delivered as progress acknowledgements arrive.
 
 ## Build
 

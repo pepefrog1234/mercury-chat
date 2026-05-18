@@ -235,7 +235,7 @@ QByteArray ChatProtocol::encodeTextMessage(const QString &from, const QString &t
     return encodeFrame(object);
 }
 
-QByteArray ChatProtocol::encodeAckMessage(const QString &from, const QString &messageId)
+QByteArray ChatProtocol::encodeAckMessage(const QString &from, const QString &messageId, int receivedChars)
 {
     const QString trimmedId = messageId.trimmed();
     if (trimmedId.isEmpty())
@@ -245,6 +245,8 @@ QByteArray ChatProtocol::encodeAckMessage(const QString &from, const QString &me
     object.insert(QStringLiteral("v"), 1);
     object.insert(QStringLiteral("type"), QStringLiteral("ack"));
     object.insert(QStringLiteral("ack"), trimmedId);
+    if (receivedChars >= 0)
+        object.insert(QStringLiteral("chars"), receivedChars);
     object.insert(QStringLiteral("from"), normalizeCallsign(from));
     object.insert(QStringLiteral("time"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
 
@@ -339,6 +341,7 @@ ChatPartialMessage ChatProtocol::previewIncompleteMessage(const QByteArray &buff
         preview.bytesBuffered = buffer.size();
     }
 
+    preview.id = previewStringField(visibleBuffer, "id").trimmed();
     preview.from = normalizeCallsign(previewStringField(visibleBuffer, "from"));
     preview.text = previewStringField(visibleBuffer, "text");
     preview.active = !preview.text.isEmpty();
@@ -379,6 +382,7 @@ ChatMessage ChatProtocol::decodeLine(const QByteArray &line)
         ChatMessage message;
         message.kind = ChatMessage::Kind::Ack;
         message.ackId = object.value(QStringLiteral("ack")).toString().trimmed();
+        message.ackChars = object.value(QStringLiteral("chars")).toInt(-1);
         message.from = normalizeCallsign(object.value(QStringLiteral("from")).toString());
         message.timestampUtc = QDateTime::fromString(object.value(QStringLiteral("time")).toString(), Qt::ISODateWithMs);
         if (!message.timestampUtc.isValid())

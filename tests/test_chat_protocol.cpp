@@ -41,13 +41,15 @@ int main(int argc, char **argv)
     if (!expect(buffer.isEmpty(), "buffer should be empty after complete decode"))
         return 1;
 
-    const QByteArray ackEncoded = ChatProtocol::encodeAckMessage(QStringLiteral("TESTB"), firstMessageId);
+    const QByteArray ackEncoded = ChatProtocol::encodeAckMessage(QStringLiteral("TESTB"), firstMessageId, 5);
     messages = ChatProtocol::appendAndDecode(buffer, ackEncoded);
     if (!expect(messages.size() == 1, "ack frame should decode one message"))
         return 1;
     if (!expect(messages.first().kind == ChatMessage::Kind::Ack, "ack frame should decode as ack"))
         return 1;
     if (!expect(messages.first().ackId == firstMessageId, "ack id should match the original message id"))
+        return 1;
+    if (!expect(messages.first().ackChars == 5, "ack should carry delivered character count"))
         return 1;
     if (!expect(messages.first().from == QStringLiteral("TESTB"), "ack sender should normalize"))
         return 1;
@@ -66,8 +68,9 @@ int main(int argc, char **argv)
         return 1;
 
     buffer.clear();
+    const QString partialMessageId = ChatProtocol::createMessageId();
     const QByteArray partialEncoded =
-        ChatProtocol::encodeTextMessage(QStringLiteral("TESTA"), QStringLiteral("眾神端坐高天原"));
+        ChatProtocol::encodeTextMessage(QStringLiteral("TESTA"), QStringLiteral("眾神端坐高天原"), partialMessageId);
     const qsizetype headerEnd = partialEncoded.indexOf('\n') + 1;
     buffer = partialEncoded.left(headerEnd);
     ChatPartialMessage partial = ChatProtocol::previewIncompleteMessage(buffer);
@@ -89,6 +92,8 @@ int main(int argc, char **argv)
     if (!expect(partial.bytesBuffered < partial.totalBytes, "partial preview should report received bytes before completion"))
         return 1;
     if (!expect(partial.from == QStringLiteral("TESTA"), "partial preview should include sender once decoded"))
+        return 1;
+    if (!expect(partial.id == partialMessageId, "partial preview should expose message id for progress ack"))
         return 1;
     if (!expect(partial.text == QStringLiteral("眾神"), "partial preview should expose decoded CJK prefix"))
         return 1;

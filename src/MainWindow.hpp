@@ -71,8 +71,9 @@ private:
     void clearPartialIncoming();
     void insertTranscriptLine(const QString &line, int *blockNumber = nullptr);
     bool replaceTranscriptBlock(int blockNumber, const QString &line);
-    void confirmSentTranscript(const QString &messageId);
-    bool setTranscriptBlockColor(int blockNumber, const QColor &color);
+    void confirmSentTranscript(const QString &messageId, int deliveredChars);
+    void sendReceiveAck(const QString &messageId, int receivedChars, bool force);
+    bool setTranscriptBlockColorRange(int blockNumber, int start, int length, const QColor &color);
     void autoInitializeStation();
     void markStationSettingsDirty();
     void beginTransmitProgress(int totalBytes);
@@ -114,7 +115,16 @@ private:
     bool partialRxVisible_ = false;
     int partialRxBlockNumber_ = -1;
     QString partialRxTimeLabel_;
-    QHash<QString, int> pendingSentBlocks_;
+    struct SentTranscriptState
+    {
+        int blockNumber = -1;
+        int textStart = 0;
+        int totalChars = 0;
+        int deliveredChars = 0;
+    };
+    QHash<QString, SentTranscriptState> pendingSentBlocks_;
+    QString currentRxAckId_;
+    int currentRxAckChars_ = 0;
     bool transmitProgressActive_ = false;
     bool transmitProgressSeenBuffer_ = false;
     bool receiveProgressActive_ = false;

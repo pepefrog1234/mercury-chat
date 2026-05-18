@@ -1061,16 +1061,14 @@ void MainWindow::onDataReceived(const QByteArray &bytes)
     {
         if (message.kind == ChatMessage::Kind::Ack)
         {
-            confirmSentTranscript(message.ackId);
+            confirmSentTranscript(message.ackId, message.ackChars);
             continue;
         }
 
         const QString speaker = message.from.isEmpty() ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_) : message.from;
         appendIncomingTranscript(speaker, message.text);
         decodedDisplayMessages = true;
-        const QByteArray ack = ChatProtocol::encodeAckMessage(localCallsign(), message.id);
-        if (!ack.isEmpty())
-            tnc_.sendPayload(ack);
+        sendReceiveAck(message.id, message.text.size(), true);
     }
 
     const ChatPartialMessage partial = ChatProtocol::previewIncompleteMessage(chatRxBuffer_);
@@ -1141,6 +1139,8 @@ void MainWindow::resetLinkStatus()
     lastBufferBytes_ = 0;
     chatRxBuffer_.clear();
     pendingSentBlocks_.clear();
+    currentRxAckId_.clear();
+    currentRxAckChars_ = 0;
     clearPartialIncoming();
     setTransferIdle();
     updateLinkControls();
@@ -1212,10 +1212,17 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
 
 void MainWindow::appendTranscript(const QString &speaker, const QString &text, const QString &messageId)
 {
+    const QString line = transcriptLine(speaker, text);
     int blockNumber = -1;
-    insertTranscriptLine(transcriptLine(speaker, text), messageId.isEmpty() ? nullptr : &blockNumber);
+    insertTranscriptLine(line, messageId.isEmpty() ? nullptr : &blockNumber);
     if (!messageId.isEmpty() && blockNumber >= 0)
-        pendingSentBlocks_.insert(messageId, blockNumber);
+    {
+        SentTranscriptState state;
+        state.blockNumber = blockNumber;
+        state.textStart = line.size() - text.size();
+        state.totalChars = text.size();
+        pendingSentBlocks_.insert(messageId, state);
+    }
 }
 
 void MainWindow::appendIncomingTranscript(const QString &speaker, const QString &text)
@@ -1305,6 +1312,8 @@ void MainWindow::showPartialIncoming(const ChatPartialMessage &message)
     if (!message.active)
         return;
 
+    sendReceiveAck(message.id, message.text.size(), false);
+
     const QString speaker = message.from.isEmpty()
                                 ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_)
                                 : message.from;
@@ -1366,19 +1375,53 @@ bool MainWindow::replaceTranscriptBlock(int blockNumber, const QString &line)
     return true;
 }
 
-void MainWindow::confirmSentTranscript(const QString &messageId)
+void MainWindow::confirmSentTranscript(const QString &messageId, int deliveredChars)
 {
     const auto it = pendingSentBlocks_.find(messageId);
     if (it == pendingSentBlocks_.end())
         return;
 
-    setTranscriptBlockColor(*it, QColor(QStringLiteral("#006400")));
-    pendingSentBlocks_.erase(it);
+    SentTranscriptState &state = it.value();
+    const int targetChars = deliveredChars < 0 ? state.totalChars : qBound(0, deliveredChars, state.totalChars);
+    if (targetChars <= state.deliveredChars)
+        return;
+
+    const int newChars = targetChars - state.deliveredChars;
+    if (setTranscriptBlockColorRange(state.blockNumber,
+                                     state.textStart + state.deliveredChars,
+                                     newChars,
+                                     QColor(QStringLiteral("#006400"))))
+    {
+        state.deliveredChars = targetChars;
+    }
+
+    if (state.deliveredChars >= state.totalChars)
+        pendingSentBlocks_.erase(it);
 }
 
-bool MainWindow::setTranscriptBlockColor(int blockNumber, const QColor &color)
+void MainWindow::sendReceiveAck(const QString &messageId, int receivedChars, bool force)
 {
-    if (blockNumber < 0)
+    if (messageId.isEmpty() || receivedChars < 0)
+        return;
+
+    if (currentRxAckId_ != messageId)
+    {
+        currentRxAckId_ = messageId;
+        currentRxAckChars_ = 0;
+    }
+
+    if (!force && receivedChars <= currentRxAckChars_)
+        return;
+
+    currentRxAckChars_ = qMax(currentRxAckChars_, receivedChars);
+    const QByteArray ack = ChatProtocol::encodeAckMessage(localCallsign(), messageId, receivedChars);
+    if (!ack.isEmpty())
+        tnc_.sendPayload(ack);
+}
+
+bool MainWindow::setTranscriptBlockColorRange(int blockNumber, int start, int length, const QColor &color)
+{
+    if (blockNumber < 0 || start < 0 || length <= 0)
         return false;
 
     const QTextBlock block = transcript_->document()->findBlockByNumber(blockNumber);
@@ -1386,7 +1429,8 @@ bool MainWindow::setTranscriptBlockColor(int blockNumber, const QColor &color)
         return false;
 
     QTextCursor cursor(block);
-    cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    cursor.movePosition(QTextCursor::Right, QTextCursor::MoveAnchor, start);
+    cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, length);
     QTextCharFormat format;
     format.setForeground(color);
     cursor.mergeCharFormat(format);
