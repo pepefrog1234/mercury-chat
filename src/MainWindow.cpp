@@ -50,6 +50,18 @@ QString snrLabel(double snrDb, bool hasSnr)
     return hasSnr ? QStringLiteral("%1 dB").arg(snrDb, 0, 'f', 1) : QStringLiteral("-");
 }
 
+QString bitrateLabel(int speedLevel, int bitsPerSecond)
+{
+    if (speedLevel <= 0 || bitsPerSecond <= 0)
+        return QStringLiteral("-");
+    return QStringLiteral("L%1 %2 bps").arg(speedLevel).arg(bitsPerSecond);
+}
+
+QString transferRateLabel(int speedLevel, int bitsPerSecond)
+{
+    return QStringLiteral("Rate %1").arg(bitrateLabel(speedLevel, bitsPerSecond));
+}
+
 QString utcTimeLabel()
 {
     return QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
@@ -424,6 +436,10 @@ void MainWindow::buildUi()
     typingStatusLabel_ = new QLabel(chatPage);
     typingStatusLabel_->setText(QString());
     transferStatusLabel_ = new QLabel(QStringLiteral("Idle"), chatPage);
+    transferRateLabel_ = new QLabel(transferRateLabel(0, 0), chatPage);
+    transferRateLabel_->setMinimumWidth(110);
+    transferRateLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    transferRateLabel_->setToolTip(QStringLiteral("Current TNC BITRATE telemetry"));
     transferProgressBar_ = new QProgressBar(chatPage);
     transferProgressBar_->setRange(0, 1);
     transferProgressBar_->setValue(0);
@@ -433,6 +449,7 @@ void MainWindow::buildUi()
     transferLayout->setContentsMargins(0, 0, 0, 0);
     transferLayout->addWidget(transferStatusLabel_);
     transferLayout->addWidget(transferProgressBar_, 1);
+    transferLayout->addWidget(transferRateLabel_);
     auto *chatOptionRow = new QWidget(chatPage);
     auto *chatOptionLayout = new QHBoxLayout(chatOptionRow);
     chatOptionLayout->setContentsMargins(0, 0, 0, 0);
@@ -722,7 +739,7 @@ void MainWindow::wireSignals()
         snrStatusLabel_->setText(QStringLiteral("%1 dB").arg(snr, 0, 'f', 1));
     });
     connect(&tnc_, &TncClient::bitrateUpdated, this, [this](int level, int bps) {
-        bitrateStatusLabel_->setText(QStringLiteral("L%1 %2 bps").arg(level).arg(bps));
+        updateBitrateLabels(level, bps);
     });
     connect(&tnc_, &TncClient::dataReceived, this, &MainWindow::onDataReceived);
 
@@ -1078,7 +1095,7 @@ void MainWindow::onLinkConnected(const QString &source, const QString &destinati
     linkStatusLabel_->setText(QStringLiteral("Connected (%1 -> %2)").arg(source, destination));
     linkBandwidthLabel_->setText(bandwidthLabel(bandwidthHz));
     snrStatusLabel_->setText(QStringLiteral("Waiting"));
-    bitrateStatusLabel_->setText(QStringLiteral("-"));
+    updateBitrateLabels(0, 0);
     updateLinkDuration();
     linkDurationTimer_->start();
     restartLinkIdleTimer();
@@ -1181,7 +1198,7 @@ void MainWindow::resetLinkStatus()
     linkDurationLabel_->setText(QStringLiteral("-"));
     linkBandwidthLabel_->setText(QStringLiteral("-"));
     snrStatusLabel_->setText(QStringLiteral("-"));
-    bitrateStatusLabel_->setText(QStringLiteral("-"));
+    updateBitrateLabels(0, 0);
     bufferStatusLabel_->setText(QStringLiteral("0 bytes"));
     lastBufferBytes_ = 0;
     lastTypingIndicatorSentAt_ = {};
@@ -1657,6 +1674,15 @@ void MainWindow::onLinkIdleTimeout()
 
     appendSystemLine(QStringLiteral("Link idle for 5 minutes; disconnecting"));
     tnc_.disconnectLink();
+}
+
+void MainWindow::updateBitrateLabels(int speedLevel, int bitsPerSecond)
+{
+    currentBitrateLevel_ = speedLevel;
+    currentBitrateBps_ = bitsPerSecond;
+
+    bitrateStatusLabel_->setText(bitrateLabel(currentBitrateLevel_, currentBitrateBps_));
+    transferRateLabel_->setText(transferRateLabel(currentBitrateLevel_, currentBitrateBps_));
 }
 
 void MainWindow::updateBeaconRow(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr)
