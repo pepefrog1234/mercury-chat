@@ -663,8 +663,13 @@ void MainWindow::wireSignals()
         pttStatusLabel_->setText(enabled ? QStringLiteral("PTT on") : QStringLiteral("PTT off"));
         if (catFollowPttCheck_->isChecked() && cat_.isConnected())
             cat_.setPtt(enabled);
-        if (!enabled && transmitProgressActive_)
-            finishTransmitProgress();
+        if (transmitProgressActive_)
+        {
+            if (enabled)
+                transmitProgressSawPtt_ = true;
+            else
+                tnc_.queryBuffer();
+        }
     });
     connect(&tnc_, &TncClient::bufferUpdated, this, [this](int bytes) {
         lastBufferBytes_ = bytes;
@@ -993,6 +998,7 @@ void MainWindow::sendChatMessage()
     const QByteArray payload = ChatProtocol::encodeTextMessage(callsign, text);
     beginTransmitProgress(payload.size());
     tnc_.sendPayload(payload);
+    tnc_.queryBuffer();
     appendTranscript(callsign, text);
     messageEdit_->clear();
 }
@@ -1352,7 +1358,10 @@ void MainWindow::beginTransmitProgress(int totalBytes)
 
     transmitProgressActive_ = true;
     transmitProgressSeenBuffer_ = false;
+    transmitProgressSawPtt_ = false;
     transmitProgressTotalBytes_ = qMax(lastBufferBytes_, 0) + totalBytes;
+    if (lastBufferBytes_ > 0)
+        transmitProgressSeenBuffer_ = true;
     receiveProgressActive_ = false;
     transferIdleTimer_->stop();
     transferProgressBar_->setRange(0, transmitProgressTotalBytes_);
@@ -1365,10 +1374,13 @@ void MainWindow::updateTransmitProgress(int remainingBytes)
     if (!transmitProgressActive_ || transmitProgressTotalBytes_ <= 0)
         return;
 
+    if (remainingBytes > transmitProgressTotalBytes_)
+        transmitProgressTotalBytes_ = remainingBytes;
+
     const int clampedRemaining = qBound(0, remainingBytes, transmitProgressTotalBytes_);
     if (remainingBytes > 0)
         transmitProgressSeenBuffer_ = true;
-    if (clampedRemaining == 0 && !transmitProgressSeenBuffer_)
+    if (clampedRemaining == 0 && !transmitProgressSeenBuffer_ && !transmitProgressSawPtt_)
         return;
 
     const int sentBytes = transmitProgressTotalBytes_ - clampedRemaining;
@@ -1396,6 +1408,7 @@ void MainWindow::finishTransmitProgress()
     transferStatusLabel_->setText(QStringLiteral("TX complete"));
     transmitProgressActive_ = false;
     transmitProgressSeenBuffer_ = false;
+    transmitProgressSawPtt_ = false;
     transmitProgressTotalBytes_ = 0;
     scheduleTransferIdle();
 }
@@ -1421,6 +1434,7 @@ void MainWindow::setTransferIdle()
 {
     transmitProgressActive_ = false;
     transmitProgressSeenBuffer_ = false;
+    transmitProgressSawPtt_ = false;
     receiveProgressActive_ = false;
     transmitProgressTotalBytes_ = 0;
     transferIdleTimer_->stop();

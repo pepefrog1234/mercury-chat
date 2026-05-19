@@ -140,6 +140,15 @@ void TncClient::abortLink()
     sendCommand(QStringLiteral("ABORT"));
 }
 
+void TncClient::queryBuffer()
+{
+    if (!isControlConnected())
+        return;
+
+    controlSocket_.write("BUFFER\r");
+    controlSocket_.flush();
+}
+
 void TncClient::sendPayload(const QByteArray &payload)
 {
     if (!isDataConnected())

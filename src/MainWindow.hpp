@@ -112,6 +112,7 @@ private:
     QString partialRxTimeLabel_;
     bool transmitProgressActive_ = false;
     bool transmitProgressSeenBuffer_ = false;
+    bool transmitProgressSawPtt_ = false;
     bool receiveProgressActive_ = false;
     int transmitProgressTotalBytes_ = 0;
     int lastBufferBytes_ = 0;

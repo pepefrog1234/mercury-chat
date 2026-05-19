@@ -24,6 +24,7 @@ public slots:
     void connectPeer(const QString &myCallsign, const QString &theirCallsign);
     void disconnectLink();
     void abortLink();
+    void queryBuffer();
     void sendPayload(const QByteArray &payload);
 
 signals:
