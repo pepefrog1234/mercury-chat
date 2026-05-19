@@ -21,6 +21,7 @@
 #include <QProgressBar>
 #include <QProcess>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -41,6 +42,12 @@ namespace
 constexpr int kLinkIdleDisconnectMs = 5 * 60 * 1000;
 constexpr int kTypingIndicatorMinIntervalMs = 15000;
 constexpr int kRemoteTypingVisibleMs = 15000;
+
+struct AudioDeviceChoice
+{
+    QString id;
+    QString name;
+};
 
 QString bandwidthLabel(int bandwidthHz)
 {
@@ -112,9 +119,16 @@ QString comboValue(const QComboBox *combo)
     return combo->currentText().trimmed();
 }
 
-void addAudioDeviceItems(QComboBox *combo, const QList<QAudioDevice> &devices)
+QString audioDeviceLabel(const AudioDeviceChoice &device)
 {
-    combo->addItem(QStringLiteral("Default"), QString());
+    if (device.id.isEmpty() || device.id == device.name)
+        return device.name;
+    return QStringLiteral("%1 [%2]").arg(device.name, device.id);
+}
+
+QList<AudioDeviceChoice> qtAudioDeviceChoices(const QList<QAudioDevice> &devices)
+{
+    QList<AudioDeviceChoice> choices;
 
     QStringList seen;
     for (const QAudioDevice &device : devices)
@@ -123,8 +137,120 @@ void addAudioDeviceItems(QComboBox *combo, const QList<QAudioDevice> &devices)
         if (description.isEmpty() || seen.contains(description, Qt::CaseInsensitive))
             continue;
         seen.append(description);
-        combo->addItem(description, description);
+        choices.append({description, description});
     }
+
+    return choices;
+}
+
+QList<AudioDeviceChoice> parseMercuryAudioDevices(const QString &output, const QString &sectionName)
+{
+    QList<AudioDeviceChoice> choices;
+    bool inWantedSection = false;
+    static const QRegularExpression deviceLine(
+        QStringLiteral("^device:\\s+name:\\s+'([^']*)'\\s+id:\\s+'([^']*)'"));
+
+    const QStringList lines = output.split(QLatin1Char('\n'));
+    for (const QString &rawLine : lines)
+    {
+        const QString line = rawLine.trimmed();
+        if (line == QStringLiteral("playback devices:") ||
+            line == QStringLiteral("capture devices:"))
+        {
+            inWantedSection = line.startsWith(sectionName);
+            continue;
+        }
+
+        if (!inWantedSection)
+            continue;
+
+        const QRegularExpressionMatch match = deviceLine.match(line);
+        if (!match.hasMatch())
+            continue;
+
+        const QString name = match.captured(1).trimmed();
+        const QString id = match.captured(2).trimmed();
+        if (name.isEmpty() || id.isEmpty())
+            continue;
+
+        bool duplicate = false;
+        for (const AudioDeviceChoice &choice : choices)
+        {
+            if (choice.id == id)
+            {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate)
+            choices.append({id, name});
+    }
+
+    return choices;
+}
+
+QList<AudioDeviceChoice> mercuryAudioDeviceChoices(const QString &executable,
+                                                   const QString &soundSystem,
+                                                   bool capture)
+{
+    if (executable.trimmed().isEmpty() || soundSystem == QLatin1String("shm"))
+        return {};
+
+    QStringList arguments;
+    arguments << QStringLiteral("-z");
+    if (!soundSystem.isEmpty() && soundSystem != QLatin1String("auto"))
+        arguments << QStringLiteral("-x") << soundSystem;
+
+    QProcess process;
+    process.setProgram(executable.trimmed());
+    process.setArguments(arguments);
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.start();
+    if (!process.waitForStarted(1500))
+        return {};
+    if (!process.waitForFinished(3000))
+    {
+        process.kill();
+        process.waitForFinished(1000);
+        return {};
+    }
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
+        return {};
+
+    const QString output = QString::fromLocal8Bit(process.readAll());
+    return parseMercuryAudioDevices(output, capture ? QStringLiteral("capture")
+                                                   : QStringLiteral("playback"));
+}
+
+void populateAudioDeviceCombo(QComboBox *combo,
+                              const QList<AudioDeviceChoice> &devices,
+                              const QString &selectedValue)
+{
+    const QSignalBlocker blocker(combo);
+    combo->clear();
+    combo->addItem(QStringLiteral("Default"), QString());
+
+    for (const AudioDeviceChoice &device : devices)
+        combo->addItem(audioDeviceLabel(device), device.id);
+
+    if (selectedValue.isEmpty())
+    {
+        combo->setCurrentIndex(0);
+        return;
+    }
+
+    for (int i = 0; i < combo->count(); ++i)
+    {
+        if (combo->itemData(i).toString() == selectedValue ||
+            combo->itemText(i).startsWith(selectedValue + QStringLiteral(" ["), Qt::CaseInsensitive) ||
+            combo->itemText(i).compare(selectedValue, Qt::CaseInsensitive) == 0)
+        {
+            combo->setCurrentIndex(i);
+            return;
+        }
+    }
+
+    combo->setCurrentText(selectedValue);
 }
 }
 
@@ -135,6 +261,7 @@ MainWindow::MainWindow(const QString &settingsFile, const QString &profileName, 
 {
     buildUi();
     loadSettings();
+    refreshAudioDeviceLists();
     wireSignals();
     setWindowTitle(profileName_.isEmpty()
                        ? QStringLiteral("Mercury Chat")
@@ -224,11 +351,11 @@ void MainWindow::buildUi()
     inputDeviceCombo_ = new QComboBox(audioGroup);
     inputDeviceCombo_->setEditable(true);
     inputDeviceCombo_->setInsertPolicy(QComboBox::NoInsert);
-    addAudioDeviceItems(inputDeviceCombo_, QMediaDevices::audioInputs());
+    populateAudioDeviceCombo(inputDeviceCombo_, qtAudioDeviceChoices(QMediaDevices::audioInputs()), {});
     outputDeviceCombo_ = new QComboBox(audioGroup);
     outputDeviceCombo_->setEditable(true);
     outputDeviceCombo_->setInsertPolicy(QComboBox::NoInsert);
-    addAudioDeviceItems(outputDeviceCombo_, QMediaDevices::audioOutputs());
+    populateAudioDeviceCombo(outputDeviceCombo_, qtAudioDeviceChoices(QMediaDevices::audioOutputs()), {});
     captureChannelCombo_ = new QComboBox(audioGroup);
     captureChannelCombo_->addItem(QStringLiteral("Left"), QStringLiteral("left"));
     captureChannelCombo_->addItem(QStringLiteral("Right"), QStringLiteral("right"));
@@ -612,6 +739,25 @@ void MainWindow::saveSettings() const
     settings->sync();
 }
 
+void MainWindow::refreshAudioDeviceLists()
+{
+    const QString selectedInput = comboValue(inputDeviceCombo_);
+    const QString selectedOutput = comboValue(outputDeviceCombo_);
+    const QString soundSystem = currentComboData(soundSystemCombo_, QStringLiteral("auto")).toString();
+    const QString executable = modemPathEdit_->text().trimmed();
+
+    QList<AudioDeviceChoice> inputs = mercuryAudioDeviceChoices(executable, soundSystem, true);
+    QList<AudioDeviceChoice> outputs = mercuryAudioDeviceChoices(executable, soundSystem, false);
+
+    if (inputs.isEmpty())
+        inputs = qtAudioDeviceChoices(QMediaDevices::audioInputs());
+    if (outputs.isEmpty())
+        outputs = qtAudioDeviceChoices(QMediaDevices::audioOutputs());
+
+    populateAudioDeviceCombo(inputDeviceCombo_, inputs, selectedInput);
+    populateAudioDeviceCombo(outputDeviceCombo_, outputs, selectedOutput);
+}
+
 void MainWindow::wireSignals()
 {
     connect(modemStartButton_, &QPushButton::clicked, this, &MainWindow::startModem);
@@ -641,6 +787,14 @@ void MainWindow::wireSignals()
     });
     connect(&modem_, &ModemProcess::outputLine, this, [this](const QString &line) {
         appendStatusLine(QStringLiteral("modem: %1").arg(line));
+    });
+    connect(modemPathEdit_, &QLineEdit::editingFinished, this, [this]() {
+        refreshAudioDeviceLists();
+        saveSettings();
+    });
+    connect(soundSystemCombo_, &QComboBox::currentIndexChanged, this, [this](int) {
+        refreshAudioDeviceLists();
+        saveSettings();
     });
 
     connect(tncConnectButton_, &QPushButton::clicked, this, &MainWindow::connectTnc);

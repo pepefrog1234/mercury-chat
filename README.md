@@ -89,7 +89,7 @@ The GUI starts Mercury with the selected ARQ base port and broadcast port:
 mercury -p 8300 -b 8100
 ```
 
-Audio settings in the Modem tab map to Mercury options: sound system becomes `-x`, input device becomes `-i`, output device becomes `-o`, and RX channel becomes `-k`. Input/output devices are editable drop-downs populated from the OS audio device list; leave them on `Default` for Mercury defaults, or type a platform-specific device string such as `plughw:0,0`.
+Audio settings in the Modem tab map to Mercury options: sound system becomes `-x`, input device becomes `-i`, output device becomes `-o`, and RX channel becomes `-k`. Input/output devices are editable drop-downs populated from Mercury's own `-z` device list when the configured modem executable is available, so Windows WASAPI/DirectSound and macOS CoreAudio entries use the device IDs Mercury expects. If Mercury cannot be queried, the GUI falls back to Qt's OS audio device names. Leave devices on `Default` for Mercury defaults, or type a platform-specific device string such as `plughw:0,0`.
 
 Extra modem arguments can be added in the Mercury Modem panel. For example, if you want Mercury itself to handle CAT/PTT:
 

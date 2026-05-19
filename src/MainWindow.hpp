@@ -64,6 +64,7 @@ private:
     void wireSignals();
     void loadSettings();
     void saveSettings() const;
+    void refreshAudioDeviceLists();
     void appendTranscript(const QString &speaker, const QString &text);
     void appendIncomingTranscript(const QString &speaker, const QString &text);
     void appendSystemLine(const QString &text);
