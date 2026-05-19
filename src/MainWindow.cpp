@@ -3,7 +3,6 @@
 #include "ChatProtocol.hpp"
 
 #include <QCheckBox>
-#include <QColor>
 #include <QCompleter>
 #include <QComboBox>
 #include <QDateTime>
@@ -29,7 +28,6 @@
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTextBlock>
-#include <QTextCharFormat>
 #include <QTextEdit>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -38,8 +36,6 @@
 
 namespace
 {
-constexpr int kChatChunkChars = 8;
-
 QString bandwidthLabel(int bandwidthHz)
 {
     return QStringLiteral("%1 Hz").arg(bandwidthHz);
@@ -994,9 +990,10 @@ void MainWindow::sendChatMessage()
         return;
 
     const QString callsign = localCallsign();
-    const QString messageId = ChatProtocol::createMessageId();
-    appendTranscript(callsign, text, messageId);
-    queueOutgoingMessage(messageId, callsign, text);
+    const QByteArray payload = ChatProtocol::encodeTextMessage(callsign, text);
+    beginTransmitProgress(payload.size());
+    tnc_.sendPayload(payload);
+    appendTranscript(callsign, text);
     messageEdit_->clear();
 }
 
@@ -1056,26 +1053,11 @@ void MainWindow::onLinkDisconnected()
 void MainWindow::onDataReceived(const QByteArray &bytes)
 {
     const QList<ChatMessage> messages = ChatProtocol::appendAndDecode(chatRxBuffer_, bytes);
-    bool decodedDisplayMessages = false;
+    const bool decodedCompleteMessages = !messages.isEmpty();
     for (const ChatMessage &message : messages)
     {
-        if (message.kind == ChatMessage::Kind::Ack)
-        {
-            confirmSentTranscript(message.ackId, message.ackChars);
-            continue;
-        }
-
-        if (!message.id.isEmpty() && message.totalChars >= 0)
-        {
-            decodedDisplayMessages = appendIncomingChunk(message) || decodedDisplayMessages;
-        }
-        else
-        {
-            const QString speaker = message.from.isEmpty() ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_) : message.from;
-            appendIncomingTranscript(speaker, message.text);
-            decodedDisplayMessages = true;
-            sendReceiveAck(message.id, message.text.size(), true);
-        }
+        const QString speaker = message.from.isEmpty() ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_) : message.from;
+        appendIncomingTranscript(speaker, message.text);
     }
 
     const ChatPartialMessage partial = ChatProtocol::previewIncompleteMessage(chatRxBuffer_);
@@ -1084,7 +1066,7 @@ void MainWindow::onDataReceived(const QByteArray &bytes)
     else
     {
         clearPartialIncoming();
-        if (decodedDisplayMessages && chatRxBuffer_.isEmpty())
+        if (decodedCompleteMessages && chatRxBuffer_.isEmpty())
             finishReceiveProgress();
     }
 }
@@ -1145,13 +1127,6 @@ void MainWindow::resetLinkStatus()
     bufferStatusLabel_->setText(QStringLiteral("0 bytes"));
     lastBufferBytes_ = 0;
     chatRxBuffer_.clear();
-    pendingSentBlocks_.clear();
-    outgoingMessages_.clear();
-    outgoingMessageOrder_.clear();
-    activeOutgoingMessageId_.clear();
-    incomingMessages_.clear();
-    currentRxAckId_.clear();
-    currentRxAckChars_ = 0;
     clearPartialIncoming();
     setTransferIdle();
     updateLinkControls();
@@ -1221,19 +1196,9 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
     updateLinkControls();
 }
 
-void MainWindow::appendTranscript(const QString &speaker, const QString &text, const QString &messageId)
+void MainWindow::appendTranscript(const QString &speaker, const QString &text)
 {
-    const QString line = transcriptLine(speaker, text);
-    int blockNumber = -1;
-    insertTranscriptLine(line, messageId.isEmpty() ? nullptr : &blockNumber);
-    if (!messageId.isEmpty() && blockNumber >= 0)
-    {
-        SentTranscriptState state;
-        state.blockNumber = blockNumber;
-        state.textStart = line.size() - text.size();
-        state.totalChars = text.size();
-        pendingSentBlocks_.insert(messageId, state);
-    }
+    insertTranscriptLine(transcriptLine(speaker, text));
 }
 
 void MainWindow::appendIncomingTranscript(const QString &speaker, const QString &text)
@@ -1323,10 +1288,6 @@ void MainWindow::showPartialIncoming(const ChatPartialMessage &message)
     if (!message.active)
         return;
 
-    sendReceiveAck(message.id, message.offset + message.text.size(), false);
-    if (!message.id.isEmpty())
-        return;
-
     const QString speaker = message.from.isEmpty()
                                 ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_)
                                 : message.from;
@@ -1361,14 +1322,10 @@ void MainWindow::clearPartialIncoming()
 
 void MainWindow::insertTranscriptLine(const QString &line, int *blockNumber)
 {
-    QTextCursor cursor = transcript_->textCursor();
-    cursor.movePosition(QTextCursor::End);
+    transcript_->moveCursor(QTextCursor::End);
     if (blockNumber)
         *blockNumber = transcript_->document()->blockCount() - 1;
-
-    cursor.setCharFormat(QTextCharFormat());
-    cursor.insertText(line + QLatin1Char('\n'));
-    transcript_->setTextCursor(cursor);
+    transcript_->insertPlainText(line + QLatin1Char('\n'));
     transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
 }
 
@@ -1384,207 +1341,6 @@ bool MainWindow::replaceTranscriptBlock(int blockNumber, const QString &line)
     QTextCursor cursor(block);
     cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
     cursor.insertText(line);
-    transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
-    return true;
-}
-
-void MainWindow::confirmSentTranscript(const QString &messageId, int deliveredChars)
-{
-    const auto it = pendingSentBlocks_.find(messageId);
-    if (it == pendingSentBlocks_.end())
-        return;
-
-    SentTranscriptState &state = it.value();
-    const int targetChars = deliveredChars < 0 ? state.totalChars : qBound(0, deliveredChars, state.totalChars);
-    if (targetChars > state.deliveredChars)
-    {
-        const int newChars = targetChars - state.deliveredChars;
-        if (setTranscriptBlockColorRange(state.blockNumber,
-                                         state.textStart + state.deliveredChars,
-                                         newChars,
-                                         QColor(QStringLiteral("#007A1A"))))
-        {
-            state.deliveredChars = targetChars;
-        }
-    }
-
-    if (state.deliveredChars >= state.totalChars)
-        pendingSentBlocks_.erase(it);
-
-    auto outgoingIt = outgoingMessages_.find(messageId);
-    if (outgoingIt != outgoingMessages_.end())
-    {
-        OutgoingMessageState &outgoing = outgoingIt.value();
-        if (targetChars >= outgoing.inFlightEnd)
-        {
-            outgoing.nextOffset = qMax(outgoing.nextOffset, outgoing.inFlightEnd);
-            outgoing.awaitingAck = false;
-            if (outgoing.nextOffset >= outgoing.text.size())
-            {
-                outgoingMessages_.erase(outgoingIt);
-                outgoingMessageOrder_.removeAll(messageId);
-                if (activeOutgoingMessageId_ == messageId)
-                    activeOutgoingMessageId_.clear();
-            }
-            sendNextOutgoingChunk();
-        }
-    }
-}
-
-void MainWindow::sendReceiveAck(const QString &messageId, int receivedChars, bool force)
-{
-    if (messageId.isEmpty() || receivedChars < 0)
-        return;
-
-    if (currentRxAckId_ != messageId)
-    {
-        currentRxAckId_ = messageId;
-        currentRxAckChars_ = 0;
-    }
-
-    if (!force && receivedChars <= currentRxAckChars_)
-        return;
-
-    currentRxAckChars_ = qMax(currentRxAckChars_, receivedChars);
-    const QByteArray ack = ChatProtocol::encodeAckMessage(localCallsign(), messageId, receivedChars);
-    if (!ack.isEmpty())
-        tnc_.sendPayload(ack);
-}
-
-void MainWindow::queueOutgoingMessage(const QString &messageId, const QString &from, const QString &text)
-{
-    if (messageId.isEmpty() || text.isEmpty())
-        return;
-
-    OutgoingMessageState state;
-    state.from = from;
-    state.text = text;
-    outgoingMessages_.insert(messageId, state);
-    outgoingMessageOrder_.append(messageId);
-    sendNextOutgoingChunk();
-}
-
-void MainWindow::sendNextOutgoingChunk()
-{
-    if (!tnc_.isDataConnected())
-        return;
-
-    if (!activeOutgoingMessageId_.isEmpty())
-    {
-        auto activeIt = outgoingMessages_.find(activeOutgoingMessageId_);
-        if (activeIt != outgoingMessages_.end() && activeIt.value().awaitingAck)
-            return;
-    }
-
-    while (!outgoingMessageOrder_.isEmpty() && !outgoingMessages_.contains(outgoingMessageOrder_.first()))
-        outgoingMessageOrder_.removeFirst();
-    if (outgoingMessageOrder_.isEmpty())
-    {
-        activeOutgoingMessageId_.clear();
-        return;
-    }
-
-    activeOutgoingMessageId_ = outgoingMessageOrder_.first();
-    OutgoingMessageState &state = outgoingMessages_[activeOutgoingMessageId_];
-    if (state.nextOffset >= state.text.size())
-        return;
-
-    const int chunkChars = qMin(kChatChunkChars, state.text.size() - state.nextOffset);
-    const QString chunk = state.text.mid(state.nextOffset, chunkChars);
-    const int chunkEnd = state.nextOffset + chunkChars;
-    const QByteArray payload = ChatProtocol::encodeTextChunk(state.from,
-                                                             activeOutgoingMessageId_,
-                                                             state.nextOffset,
-                                                             state.text.size(),
-                                                             chunk,
-                                                             chunkEnd >= state.text.size());
-    if (payload.isEmpty())
-        return;
-
-    state.inFlightEnd = chunkEnd;
-    state.awaitingAck = true;
-    beginTransmitProgress(payload.size());
-    tnc_.sendPayload(payload);
-}
-
-bool MainWindow::appendIncomingChunk(const ChatMessage &message)
-{
-    if (message.id.isEmpty())
-        return false;
-
-    IncomingMessageState &state = incomingMessages_[message.id];
-    if (state.timeLabel.isEmpty())
-    {
-        state.from = message.from;
-        state.timeLabel = utcTimeLabel();
-        state.totalChars = message.totalChars;
-    }
-    if (state.from.isEmpty())
-        state.from = message.from;
-    if (message.totalChars >= 0)
-        state.totalChars = message.totalChars;
-
-    if (message.offset == state.text.size())
-    {
-        state.text.append(message.text);
-    }
-    else if (message.offset < state.text.size())
-    {
-        const int overlap = state.text.size() - message.offset;
-        if (overlap < message.text.size())
-            state.text.append(message.text.mid(overlap));
-    }
-    else
-    {
-        state.text.append(message.text);
-    }
-
-    const QString speaker = state.from.isEmpty() ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_) : state.from;
-    const QString line = transcriptLine(speaker, state.text, state.timeLabel);
-    if (state.blockNumber >= 0)
-    {
-        replaceTranscriptBlock(state.blockNumber, line);
-    }
-    else
-    {
-        clearPartialIncoming();
-        insertTranscriptLine(line, &state.blockNumber);
-    }
-
-    sendReceiveAck(message.id, state.text.size(), true);
-
-    const bool complete = message.finalChunk ||
-                          (state.totalChars >= 0 && state.text.size() >= state.totalChars);
-    if (complete)
-    {
-        incomingMessages_.remove(message.id);
-        if (!transmitProgressActive_)
-            finishReceiveProgress();
-    }
-
-    return complete;
-}
-
-bool MainWindow::setTranscriptBlockColorRange(int blockNumber, int start, int length, const QColor &color)
-{
-    if (blockNumber < 0 || start < 0 || length <= 0)
-        return false;
-
-    const QTextBlock block = transcript_->document()->findBlockByNumber(blockNumber);
-    if (!block.isValid())
-        return false;
-
-    const int blockTextLength = qMax(0, block.length() - 1);
-    if (start >= blockTextLength)
-        return false;
-
-    const int boundedLength = qMin(length, blockTextLength - start);
-    QTextCursor cursor(transcript_->document());
-    cursor.setPosition(block.position() + start);
-    cursor.setPosition(block.position() + start + boundedLength, QTextCursor::KeepAnchor);
-    QTextCharFormat format;
-    format.setForeground(color);
-    cursor.setCharFormat(format);
     transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
     return true;
 }

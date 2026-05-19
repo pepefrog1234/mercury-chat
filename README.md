@@ -42,20 +42,11 @@ The helper scripts `mercury-chat/tools/run-a.sh`, `mercury-chat/tools/run-b.sh`,
 Chat messages are length-prefixed UTF-8 JSON frames on Mercury's ARQ data port. Each frame starts with an ASCII header declaring the JSON payload byte length, followed by the compact JSON payload:
 
 ```text
-MCHAT1 <payload-bytes>
-{"v":1,"type":"msg","id":"2f7c5d9b-2a9b-4de4-a15c-7d4a76aa61f3","from":"BV1AAA","time":"2026-05-16T02:00:00.000Z","text":"你好"}
+MCHAT1 86
+{"v":1,"type":"msg","from":"BV1AAA","time":"2026-05-16T02:00:00.000Z","text":"你好"}
 ```
 
 The header lets the receiver know the total message size before the text has fully arrived, so the GUI can show receive progress while still previewing already decoded UTF-8 text. Newlines inside text are JSON-escaped. The decoder still accepts the older newline-delimited JSON format for compatibility.
-
-Long local messages are sent as ordered chunks using the same `id`, with `offset`, `total`, and `final` fields. Received messages with an `id` are acknowledged with a compact `ack` frame:
-
-```text
-MCHAT1 <payload-bytes>
-{"v":1,"type":"ack","ack":"2f7c5d9b-2a9b-4de4-a15c-7d4a76aa61f3","chars":2,"from":"BV1BBB","time":"2026-05-16T02:00:01.000Z"}
-```
-
-The `chars` field reports how many decoded UTF-16 text units the receiver has seen so far. The sender marks that prefix of the local chat line as delivered as progress acknowledgements arrive.
 
 ## Build
 
