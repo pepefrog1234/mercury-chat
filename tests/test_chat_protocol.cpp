@@ -18,8 +18,15 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
 
     QByteArray buffer;
-    const QByteArray encoded = ChatProtocol::encodeTextMessage(QStringLiteral("bv1-2"), QStringLiteral("你好，世界\nMercury"));
-    if (!expect(encoded.startsWith("MCHAT1 "), "encoded messages should declare payload size before JSON"))
+    const QString sampleText = QStringLiteral("你好，世界\nMercury");
+    const QByteArray encoded = ChatProtocol::encodeTextMessage(QStringLiteral("bv1-2"), sampleText);
+    if (!expect(encoded.startsWith("MCHAT1 "), "encoded messages should declare payload size"))
+        return 1;
+    const QByteArray expectedCompactText = QByteArray("MCHAT1 ") +
+                                           QByteArray::number(sampleText.toUtf8().size() + 1) +
+                                           QByteArray("\nM") +
+                                           sampleText.toUtf8();
+    if (!expect(encoded == expectedCompactText, "text messages should use compact M payload without JSON overhead"))
         return 1;
 
     QList<ChatMessage> messages = ChatProtocol::appendAndDecode(buffer, encoded.left(8));
@@ -29,9 +36,9 @@ int main(int argc, char **argv)
     messages = ChatProtocol::appendAndDecode(buffer, encoded.mid(8));
     if (!expect(messages.size() == 1, "complete frame should decode one message"))
         return 1;
-    if (!expect(messages.first().from == QStringLiteral("BV1-2"), "callsign should normalize to uppercase"))
+    if (!expect(messages.first().from.isEmpty(), "compact text should omit callsign"))
         return 1;
-    if (!expect(messages.first().text == QStringLiteral("你好，世界\nMercury"), "UTF-8 CJK text should round-trip"))
+    if (!expect(messages.first().text == sampleText, "UTF-8 CJK text should round-trip"))
         return 1;
     if (!expect(buffer.isEmpty(), "buffer should be empty after complete decode"))
         return 1;
@@ -51,7 +58,7 @@ int main(int argc, char **argv)
 
     buffer.clear();
     const QByteArray typing = ChatProtocol::encodeTypingNotification(QStringLiteral("testb"));
-    if (!expect(typing == QByteArray("MCHAT1 1\nT\n"), "typing notification should use compact one-byte payload"))
+    if (!expect(typing == QByteArray("MCHAT1 1\nT"), "typing notification should use compact one-byte payload"))
         return 1;
     messages = ChatProtocol::appendAndDecode(buffer, typing);
     if (!expect(messages.size() == 1, "typing notification should decode one message"))
@@ -94,7 +101,7 @@ int main(int argc, char **argv)
         return 1;
     if (!expect(partial.bytesBuffered < partial.totalBytes, "partial preview should report received bytes before completion"))
         return 1;
-    if (!expect(partial.from == QStringLiteral("TESTA"), "partial preview should include sender once decoded"))
+    if (!expect(partial.from.isEmpty(), "compact partial preview should omit sender"))
         return 1;
     if (!expect(partial.text == QStringLiteral("眾神"), "partial preview should expose decoded CJK prefix"))
         return 1;

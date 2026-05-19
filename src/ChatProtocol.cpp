@@ -208,17 +208,12 @@ QString previewStringField(const QByteArray &bytes, const char *key)
 
 QByteArray ChatProtocol::encodeTextMessage(const QString &from, const QString &text)
 {
-    QJsonObject object;
-    object.insert(QStringLiteral("v"), 1);
-    object.insert(QStringLiteral("type"), QStringLiteral("msg"));
-    object.insert(QStringLiteral("from"), normalizeCallsign(from));
-    object.insert(QStringLiteral("time"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
-    object.insert(QStringLiteral("text"), text);
+    (void)from;
 
-    QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact);
+    QByteArray payload("M", 1);
+    payload.append(text.toUtf8());
     QByteArray frame = QByteArray(kFrameMagic) + QByteArray::number(payload.size()) + '\n';
     frame.append(payload);
-    frame.append('\n');
     return frame;
 }
 
@@ -229,7 +224,6 @@ QByteArray ChatProtocol::encodeTypingNotification(const QString &from)
     const QByteArray payload("T", 1);
     QByteArray frame = QByteArray(kFrameMagic) + QByteArray::number(payload.size()) + '\n';
     frame.append(payload);
-    frame.append('\n');
     return frame;
 }
 
@@ -274,6 +268,16 @@ QList<ChatMessage> ChatProtocol::appendAndDecode(QByteArray &buffer, const QByte
             {
                 ChatMessage message;
                 message.kind = ChatMessage::Kind::Typing;
+                message.timestampUtc = QDateTime::currentDateTimeUtc();
+                messages.append(message);
+                continue;
+            }
+
+            if (payload.startsWith('M'))
+            {
+                ChatMessage message;
+                message.kind = ChatMessage::Kind::Text;
+                message.text = QString::fromUtf8(payload.constData() + 1, payload.size() - 1);
                 message.timestampUtc = QDateTime::currentDateTimeUtc();
                 messages.append(message);
                 continue;
@@ -324,6 +328,15 @@ ChatPartialMessage ChatProtocol::previewIncompleteMessage(const QByteArray &buff
         preview.totalBytes = header.payloadBytes;
         preview.totalBytesKnown = true;
         visibleBuffer = buffer.mid(header.headerBytes, preview.bytesBuffered);
+        if (visibleBuffer.startsWith('M'))
+        {
+            const QByteArray textBytes = visibleBuffer.mid(1);
+            const qsizetype prefixLength = completeUtf8PrefixLength(textBytes);
+            if (prefixLength > 0)
+                preview.text = QString::fromUtf8(textBytes.constData(), prefixLength);
+            preview.active = !preview.text.isEmpty();
+            return preview;
+        }
     }
     else
     {
