@@ -908,7 +908,7 @@ void MainWindow::wireSignals()
         appendStatusLine(QStringLiteral("modem: %1").arg(message));
     });
     connect(&modem_, &ModemProcess::outputLine, this, [this](const QString &line) {
-        appendStatusLine(QStringLiteral("modem: %1").arg(line));
+        handleModemOutputLine(line);
     });
     connect(modemPathEdit_, &QLineEdit::editingFinished, this, [this]() {
         refreshAudioDeviceLists();
@@ -1147,6 +1147,7 @@ void MainWindow::requestLinkDisconnect()
     if (!tnc_.isControlConnected())
         return;
 
+    linkDisconnecting_ = arqConnected_;
     tnc_.disconnectLink();
     linkStatusLabel_->setText(arqConnected_ ? QStringLiteral("Disconnecting") : QStringLiteral("No ARQ link"));
     appendSystemLine(QStringLiteral("Disconnect requested"));
@@ -1380,6 +1381,7 @@ void MainWindow::onBeaconReceived(const QString &callsign, int bandwidthHz)
 void MainWindow::onLinkConnected(const QString &source, const QString &destination, int bandwidthHz)
 {
     arqConnected_ = true;
+    linkDisconnecting_ = false;
     linkPending_ = false;
     lastTypingIndicatorSentAt_ = {};
     clearRemoteTypingIndicator();
@@ -1494,6 +1496,7 @@ bool MainWindow::connectCat(bool interactive)
 void MainWindow::resetLinkStatus()
 {
     arqConnected_ = false;
+    linkDisconnecting_ = false;
     linkPending_ = false;
     peerCallsign_.clear();
     linkSource_.clear();
@@ -1526,7 +1529,7 @@ void MainWindow::updateLinkControls()
     const bool controlConnected = tnc_.isControlConnected();
     const bool beaconAllowed = controlConnected && !arqConnected_;
 
-    linkDisconnectButton_->setEnabled(controlConnected && arqConnected_);
+    linkDisconnectButton_->setEnabled(controlConnected && arqConnected_ && !linkDisconnecting_);
     updateSendControls();
     beaconSendButton_->setEnabled(beaconAllowed);
     autoBeaconCheck_->setEnabled(beaconAllowed);
@@ -1542,10 +1545,10 @@ void MainWindow::updateLinkControls()
     }
 
     connectCallsignButton_->setText(arqConnected_ ? QStringLiteral("Disconnect") : QStringLiteral("Connect"));
-    connectCallsignButton_->setEnabled(controlConnected);
+    connectCallsignButton_->setEnabled(controlConnected && !linkDisconnecting_);
 
     connectBeaconButton_->setText(arqConnected_ ? QStringLiteral("Disconnect Link") : QStringLiteral("Connect Selected"));
-    connectBeaconButton_->setEnabled(controlConnected);
+    connectBeaconButton_->setEnabled(controlConnected && !linkDisconnecting_);
 }
 
 void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
@@ -1616,6 +1619,27 @@ void MainWindow::appendStatusLine(const QString &text)
 {
     statusLog_->appendPlainText(QStringLiteral("[%1] %2").arg(utcTimeLabel(), text));
     statusLog_->verticalScrollBar()->setValue(statusLog_->verticalScrollBar()->maximum());
+}
+
+void MainWindow::handleModemOutputLine(const QString &line)
+{
+    appendStatusLine(QStringLiteral("modem: %1").arg(line));
+
+    if (line.contains(QStringLiteral("Keepalive miss limit"), Qt::CaseInsensitive))
+        markLinkDisconnecting(QStringLiteral("ARQ keepalive lost; disconnecting"));
+    else if (line.contains(QStringLiteral("Data retry exhausted"), Qt::CaseInsensitive))
+        markLinkDisconnecting(QStringLiteral("ARQ data retry exhausted; disconnecting"));
+}
+
+void MainWindow::markLinkDisconnecting(const QString &reason)
+{
+    if (!arqConnected_ || linkDisconnecting_)
+        return;
+
+    linkDisconnecting_ = true;
+    linkStatusLabel_->setText(reason);
+    appendSystemLine(reason);
+    updateLinkControls();
 }
 
 void MainWindow::autoInitializeStation()
@@ -1721,7 +1745,7 @@ bool MainWindow::trySendQueuedMessage()
         return false;
     }
 
-    if (!arqConnected_ || !tnc_.isDataConnected())
+    if (!arqConnected_ || linkDisconnecting_ || !tnc_.isDataConnected())
     {
         updateSendControls();
         return false;
@@ -1762,7 +1786,7 @@ void MainWindow::sendQueuedChatMessage(const QString &text)
 
 void MainWindow::maybeSendTypingIndicator()
 {
-    if (!typingIndicatorCheck_->isChecked() || !arqConnected_ || !tnc_.isDataConnected())
+    if (!typingIndicatorCheck_->isChecked() || !arqConnected_ || linkDisconnecting_ || !tnc_.isDataConnected())
         return;
 
     if (messageEdit_->toPlainText().trimmed().isEmpty())
@@ -1797,7 +1821,7 @@ void MainWindow::clearRemoteTypingIndicator()
 
 void MainWindow::updateSendControls()
 {
-    const bool connected = tnc_.isDataConnected() && arqConnected_;
+    const bool connected = tnc_.isDataConnected() && arqConnected_ && !linkDisconnecting_;
     sendButton_->setEnabled(connected);
 
     if (!connected)
@@ -1986,7 +2010,9 @@ void MainWindow::onLinkIdleTimeout()
     }
 
     appendSystemLine(QStringLiteral("Link idle for 5 minutes; disconnecting"));
+    linkDisconnecting_ = true;
     tnc_.disconnectLink();
+    updateLinkControls();
 }
 
 void MainWindow::updateBitrateLabels(int speedLevel, int bitsPerSecond)

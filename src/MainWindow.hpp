@@ -75,6 +75,8 @@ private:
     void appendIncomingTranscript(const QString &speaker, const QString &text);
     void appendSystemLine(const QString &text);
     void appendStatusLine(const QString &text);
+    void handleModemOutputLine(const QString &line);
+    void markLinkDisconnecting(const QString &reason);
     void showPartialIncoming(const ChatPartialMessage &message);
     void clearPartialIncoming();
     bool receiveInProgress() const;
@@ -122,6 +124,7 @@ private:
     QDateTime linkConnectedAt_;
     int linkBandwidthHz_ = 0;
     bool arqConnected_ = false;
+    bool linkDisconnecting_ = false;
     bool linkPending_ = false;
     bool beaconCommandAccepted_ = false;
     bool stationSettingsApplied_ = false;
