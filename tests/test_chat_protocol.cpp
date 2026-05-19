@@ -161,6 +161,44 @@ int main(int argc, char **argv)
     if (!expect(buffer.isEmpty(), "buffer should be empty after complete decode"))
         return 1;
 
+    buffer.clear();
+    const QString longText = QStringLiteral("眾神端坐高天原").repeated(40);
+    const QByteArray compressedEncoded = ChatProtocol::encodeTextMessage(QStringLiteral("TESTA"), longText);
+    const qsizetype compressedHeaderEnd = compressedEncoded.indexOf('\n') + 1;
+    if (!expect(compressedHeaderEnd > 0, "compressed frame should include a length header"))
+        return 1;
+    const QByteArray compressedPayload = compressedEncoded.mid(compressedHeaderEnd);
+    if (!expect(compressedPayload.startsWith('Z'), "long repetitive text should use compressed Z payload"))
+        return 1;
+    const qsizetype rawLongSize = QByteArray("MCHAT1 ").size() +
+                                  QByteArray::number(longText.toUtf8().size() + 1).size() +
+                                  QByteArray("\nM").size() +
+                                  longText.toUtf8().size();
+    if (!expect(compressedEncoded.size() < rawLongSize, "compressed frame should be smaller than raw UTF-8 frame"))
+        return 1;
+    messages = ChatProtocol::appendAndDecode(buffer, compressedEncoded);
+    if (!expect(messages.size() == 1, "compressed frame should decode one message"))
+        return 1;
+    if (!expect(messages.first().text == longText, "compressed UTF-8 text should round-trip"))
+        return 1;
+    if (!expect(buffer.isEmpty(), "buffer should be empty after compressed decode"))
+        return 1;
+
+    QByteArray malformedCompressed("Z", 1);
+    malformedCompressed.append(static_cast<char>(0xff));
+    malformedCompressed.append(static_cast<char>(0xff));
+    malformedCompressed.append(static_cast<char>(0xff));
+    malformedCompressed.append(static_cast<char>(0xff));
+    const QByteArray malformedFrame = QByteArray("MCHAT1 ") +
+                                      QByteArray::number(malformedCompressed.size()) +
+                                      '\n' +
+                                      malformedCompressed;
+    messages = ChatProtocol::appendAndDecode(buffer, malformedFrame);
+    if (!expect(messages.size() == 1, "malformed compressed frame should still produce one fallback message"))
+        return 1;
+    if (!expect(messages.first().kind == ChatMessage::Kind::Raw, "malformed compressed frame should not be decoded as text"))
+        return 1;
+
     const QByteArray legacyJsonLine = "{\"from\":\"TESTA\",\"text\":\"legacy\",\"time\":\"2026-01-01T00:00:00.000Z\",\"type\":\"msg\",\"v\":1}\n";
     messages = ChatProtocol::appendAndDecode(buffer, legacyJsonLine);
     if (!expect(messages.size() == 1, "legacy newline JSON should still decode"))

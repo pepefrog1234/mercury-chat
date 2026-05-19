@@ -10,6 +10,8 @@ namespace
 {
 constexpr qsizetype kMaxBufferedBytes = 1024 * 1024;
 constexpr auto kFrameMagic = "MCHAT1 ";
+constexpr qsizetype kCompressionMinTextBytes = 128;
+constexpr qsizetype kCompressionMinSavingsBytes = 8;
 
 struct LengthHeader
 {
@@ -204,17 +206,61 @@ QString previewStringField(const QByteArray &bytes, const char *key)
 
     return decodeJsonStringPrefix(bytes, fieldStart + needle.size());
 }
+
+QByteArray buildLengthPrefixedFrame(const QByteArray &payload)
+{
+    QByteArray frame = QByteArray(kFrameMagic) + QByteArray::number(payload.size()) + '\n';
+    frame.append(payload);
+    return frame;
+}
+
+QByteArray encodeTextPayload(const QByteArray &utf8)
+{
+    QByteArray rawPayload("M", 1);
+    rawPayload.append(utf8);
+
+    if (utf8.size() < kCompressionMinTextBytes)
+        return rawPayload;
+
+    const QByteArray compressed = qCompress(utf8, 9);
+    QByteArray compressedPayload("Z", 1);
+    compressedPayload.append(compressed);
+
+    if (compressedPayload.size() + kCompressionMinSavingsBytes < rawPayload.size())
+        return compressedPayload;
+
+    return rawPayload;
+}
+
+bool qCompressedSizeAllowed(const QByteArray &compressed)
+{
+    if (compressed.size() < 4)
+        return false;
+
+    const quint32 expectedSize =
+        (static_cast<quint32>(static_cast<uchar>(compressed.at(0))) << 24) |
+        (static_cast<quint32>(static_cast<uchar>(compressed.at(1))) << 16) |
+        (static_cast<quint32>(static_cast<uchar>(compressed.at(2))) << 8) |
+        static_cast<quint32>(static_cast<uchar>(compressed.at(3)));
+
+    return expectedSize <= static_cast<quint32>(kMaxBufferedBytes);
+}
+
+QByteArray decodeCompressedTextPayload(const QByteArray &payload)
+{
+    const QByteArray compressed = payload.mid(1);
+    if (!qCompressedSizeAllowed(compressed))
+        return {};
+
+    return qUncompress(compressed);
+}
 }
 
 QByteArray ChatProtocol::encodeTextMessage(const QString &from, const QString &text)
 {
     (void)from;
 
-    QByteArray payload("M", 1);
-    payload.append(text.toUtf8());
-    QByteArray frame = QByteArray(kFrameMagic) + QByteArray::number(payload.size()) + '\n';
-    frame.append(payload);
-    return frame;
+    return buildLengthPrefixedFrame(encodeTextPayload(text.toUtf8()));
 }
 
 QByteArray ChatProtocol::encodeTypingNotification(const QString &from)
@@ -222,9 +268,7 @@ QByteArray ChatProtocol::encodeTypingNotification(const QString &from)
     (void)from;
 
     const QByteArray payload("T", 1);
-    QByteArray frame = QByteArray(kFrameMagic) + QByteArray::number(payload.size()) + '\n';
-    frame.append(payload);
-    return frame;
+    return buildLengthPrefixedFrame(payload);
 }
 
 QList<ChatMessage> ChatProtocol::appendAndDecode(QByteArray &buffer, const QByteArray &chunk)
@@ -281,6 +325,20 @@ QList<ChatMessage> ChatProtocol::appendAndDecode(QByteArray &buffer, const QByte
                 message.timestampUtc = QDateTime::currentDateTimeUtc();
                 messages.append(message);
                 continue;
+            }
+
+            if (payload.startsWith('Z'))
+            {
+                const QByteArray textBytes = decodeCompressedTextPayload(payload);
+                if (!textBytes.isEmpty())
+                {
+                    ChatMessage message;
+                    message.kind = ChatMessage::Kind::Text;
+                    message.text = QString::fromUtf8(textBytes);
+                    message.timestampUtc = QDateTime::currentDateTimeUtc();
+                    messages.append(message);
+                    continue;
+                }
             }
 
             messages.append(decodeLine(payload));

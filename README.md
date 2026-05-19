@@ -39,7 +39,7 @@ The helper scripts `mercury-chat/tools/run-a.sh`, `mercury-chat/tools/run-b.sh`,
 
 ## Chat Payload Format
 
-Chat messages are length-prefixed compact UTF-8 frames on Mercury's ARQ data port. Each frame starts with an ASCII header declaring the payload byte length. Text payloads use `M` plus raw UTF-8 text; typing indicators use the single-byte payload `T`:
+Chat messages are length-prefixed compact UTF-8 frames on Mercury's ARQ data port. Each frame starts with an ASCII header declaring the payload byte length. Short text payloads use `M` plus raw UTF-8 text; long text payloads may use `Z` plus Qt/zlib-compressed UTF-8 when compression actually makes the frame smaller. Typing indicators use the single-byte payload `T`:
 
 ```text
 MCHAT1 7
@@ -49,7 +49,7 @@ MCHAT1 1
 T
 ```
 
-The header lets the receiver know the total message size before the text has fully arrived, so the GUI can show receive progress while still previewing already decoded UTF-8 text. The decoder still accepts the older JSON frame and newline-delimited JSON formats for compatibility.
+The header lets the receiver know the total message size before the text has fully arrived, so the GUI can show receive progress. Raw `M` text can be previewed as UTF-8 bytes arrive; compressed `Z` text is decoded after the full compressed payload has arrived. The decoder still accepts the older JSON frame and newline-delimited JSON formats for compatibility.
 
 ## Build
 
