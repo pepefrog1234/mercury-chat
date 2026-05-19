@@ -37,8 +37,8 @@
 namespace
 {
 constexpr int kLinkIdleDisconnectMs = 5 * 60 * 1000;
-constexpr int kTypingIndicatorMinIntervalMs = 5000;
-constexpr int kRemoteTypingVisibleMs = 8000;
+constexpr int kTypingIndicatorMinIntervalMs = 15000;
+constexpr int kRemoteTypingVisibleMs = 15000;
 
 QString bandwidthLabel(int bandwidthHz)
 {
