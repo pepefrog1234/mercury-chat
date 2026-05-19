@@ -4,3 +4,6 @@ dist/
 *.user
 *.swp
 .DS_Store
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal

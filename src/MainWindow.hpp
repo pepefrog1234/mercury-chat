@@ -2,6 +2,7 @@
 
 #include "CatController.hpp"
 #include "ModemProcess.hpp"
+#include "SqlLogStore.hpp"
 #include "TncClient.hpp"
 
 #include <QByteArray>
@@ -65,6 +66,10 @@ private:
     void loadSettings();
     void saveSettings() const;
     void refreshAudioDeviceLists();
+    void initializeDatabase();
+    QString defaultDatabasePath() const;
+    void recordBeaconEvent(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr);
+    void recordChatMessage(const QString &direction, const QString &speaker, const QString &text);
     void appendTranscript(const QString &speaker, const QString &text);
     void appendIncomingTranscript(const QString &speaker, const QString &text);
     void appendSystemLine(const QString &text);
@@ -106,6 +111,7 @@ private:
     TncClient tnc_;
     CatController cat_;
     ModemProcess modem_;
+    SqlLogStore sqlLog_;
     QByteArray chatRxBuffer_;
     QString settingsFile_;
     QString profileName_;

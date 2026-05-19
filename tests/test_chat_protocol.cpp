@@ -1,7 +1,11 @@
 #include "ChatProtocol.hpp"
+#include "SqlLogStore.hpp"
 
 #include <QCoreApplication>
 #include <QDebug>
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QTemporaryDir>
 
 namespace
 {
@@ -11,11 +15,78 @@ bool expect(bool condition, const char *message)
         qCritical() << message;
     return condition;
 }
+
+bool expectRowCount(const QString &databasePath, const QString &tableName, int expectedCount)
+{
+    const QString connectionName = QStringLiteral("sql-log-test-reader");
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+        db.setDatabaseName(databasePath);
+        if (!expect(db.open(), "test database should reopen for verification"))
+            return false;
+
+        QSqlQuery query(db);
+        if (!expect(query.exec(QStringLiteral("SELECT COUNT(*) FROM %1").arg(tableName)),
+                    "row count query should execute"))
+            return false;
+        if (!expect(query.next(), "row count query should return a row"))
+            return false;
+        if (!expect(query.value(0).toInt() == expectedCount, "row count should match expected value"))
+            return false;
+    }
+    QSqlDatabase::removeDatabase(connectionName);
+    return true;
+}
 }
 
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
+
+    QTemporaryDir sqlDir;
+    if (!expect(sqlDir.isValid(), "temporary SQL directory should be valid"))
+        return 1;
+    const QString sqlPath = sqlDir.filePath(QStringLiteral("mercury-chat-test.sqlite3"));
+    SqlLogStore store;
+    QString sqlError;
+    if (!expect(store.open(sqlPath, &sqlError), "SQL log store should open"))
+    {
+        qCritical() << sqlError;
+        return 1;
+    }
+    if (!expect(store.recordBeacon(QDateTime::currentDateTimeUtc(),
+                                   QStringLiteral("A"),
+                                   QStringLiteral("TESTA"),
+                                   QStringLiteral("TESTB"),
+                                   500,
+                                   true,
+                                   12.5,
+                                   &sqlError),
+                "beacon log row should insert"))
+    {
+        qCritical() << sqlError;
+        return 1;
+    }
+    if (!expect(store.recordChatMessage(QDateTime::currentDateTimeUtc(),
+                                        QStringLiteral("A"),
+                                        QStringLiteral("out"),
+                                        QStringLiteral("TESTA"),
+                                        QStringLiteral("TESTB"),
+                                        QStringLiteral("TESTA"),
+                                        QStringLiteral("TESTB"),
+                                        500,
+                                        QStringLiteral("hello"),
+                                        &sqlError),
+                "chat log row should insert"))
+    {
+        qCritical() << sqlError;
+        return 1;
+    }
+    store.close();
+    if (!expectRowCount(sqlPath, QStringLiteral("beacon_events"), 1))
+        return 1;
+    if (!expectRowCount(sqlPath, QStringLiteral("chat_messages"), 1))
+        return 1;
 
     QByteArray buffer;
     const QString sampleText = QStringLiteral("你好，世界\nMercury");

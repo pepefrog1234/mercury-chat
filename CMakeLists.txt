@@ -13,7 +13,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Multimedia Network Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Multimedia Network Sql Widgets)
 
 option(MERCURYCHAT_USE_HAMLIB "Build hamlib CAT support" ON)
 
@@ -46,11 +46,13 @@ add_library(mercurychat_core STATIC
     src/ChatProtocol.hpp
     src/ModemProcess.cpp
     src/ModemProcess.hpp
+    src/SqlLogStore.cpp
+    src/SqlLogStore.hpp
     src/TncClient.cpp
     src/TncClient.hpp)
 
 target_include_directories(mercurychat_core PUBLIC src)
-target_link_libraries(mercurychat_core PUBLIC Qt6::Core Qt6::Network)
+target_link_libraries(mercurychat_core PUBLIC Qt6::Core Qt6::Network Qt6::Sql)
 
 if(MERCURYCHAT_USE_HAMLIB)
     target_compile_definitions(mercurychat_core PUBLIC MERCURYCHAT_WITH_HAMLIB=1)

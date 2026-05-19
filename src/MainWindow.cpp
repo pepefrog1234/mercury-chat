@@ -6,7 +6,9 @@
 #include <QCompleter>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDir>
 #include <QEvent>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHeaderView>
@@ -28,6 +30,7 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QStandardPaths>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTextBlock>
@@ -262,6 +265,7 @@ MainWindow::MainWindow(const QString &settingsFile, const QString &profileName, 
     buildUi();
     loadSettings();
     refreshAudioDeviceLists();
+    initializeDatabase();
     wireSignals();
     setWindowTitle(profileName_.isEmpty()
                        ? QStringLiteral("Mercury Chat")
@@ -758,6 +762,80 @@ void MainWindow::refreshAudioDeviceLists()
     populateAudioDeviceCombo(outputDeviceCombo_, outputs, selectedOutput);
 }
 
+void MainWindow::initializeDatabase()
+{
+    QString error;
+    const QString path = defaultDatabasePath();
+    if (!sqlLog_.open(path, &error))
+    {
+        appendStatusLine(QStringLiteral("SQLite log unavailable: %1").arg(error));
+        return;
+    }
+
+    appendStatusLine(QStringLiteral("SQLite log: %1").arg(sqlLog_.databasePath()));
+}
+
+QString MainWindow::defaultDatabasePath() const
+{
+    if (!settingsFile_.isEmpty())
+    {
+        const QFileInfo settingsInfo(settingsFile_);
+        return settingsInfo.absoluteDir().filePath(settingsInfo.completeBaseName() + QStringLiteral(".sqlite3"));
+    }
+
+    QString baseDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (baseDir.isEmpty())
+        baseDir = QDir::home().filePath(QStringLiteral(".mercury-chat"));
+    return QDir(baseDir).filePath(QStringLiteral("mercury-chat.sqlite3"));
+}
+
+void MainWindow::recordBeaconEvent(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr)
+{
+    if (!sqlLog_.isOpen())
+        return;
+
+    QString error;
+    if (!sqlLog_.recordBeacon(QDateTime::currentDateTimeUtc(),
+                              profileName_,
+                              localCallsign(),
+                              callsign,
+                              bandwidthHz,
+                              hasSnr,
+                              snrDb,
+                              &error))
+    {
+        appendStatusLine(QStringLiteral("SQLite beacon log failed: %1").arg(error));
+    }
+}
+
+void MainWindow::recordChatMessage(const QString &direction, const QString &speaker, const QString &text)
+{
+    if (!sqlLog_.isOpen())
+        return;
+
+    const QString local = localCallsign();
+    QString remote = peerCallsign_;
+    if (remote.isEmpty())
+        remote = ChatProtocol::normalizeCallsign(peerCallsignEdit_->text());
+    if (remote.isEmpty() && direction == QLatin1String("in"))
+        remote = speaker;
+
+    QString error;
+    if (!sqlLog_.recordChatMessage(QDateTime::currentDateTimeUtc(),
+                                   profileName_,
+                                   direction,
+                                   local,
+                                   remote,
+                                   linkSource_,
+                                   linkDestination_,
+                                   linkBandwidthHz_,
+                                   text,
+                                   &error))
+    {
+        appendStatusLine(QStringLiteral("SQLite chat log failed: %1").arg(error));
+    }
+}
+
 void MainWindow::wireSignals()
 {
     connect(modemStartButton_, &QPushButton::clicked, this, &MainWindow::startModem);
@@ -1250,6 +1328,7 @@ void MainWindow::onBeaconReceived(const QString &callsign, int bandwidthHz)
                               lastSnrAt_.isValid() &&
                               lastSnrAt_.msecsTo(QDateTime::currentDateTime()) <= 15000;
     updateBeaconRow(callsign, bandwidthHz, lastSnrDb_, hasRecentSnr);
+    recordBeaconEvent(callsign, bandwidthHz, lastSnrDb_, hasRecentSnr);
     appendSystemLine(QStringLiteral("Beacon heard from %1 %2, SNR %3")
                          .arg(callsign, bandwidthLabel(bandwidthHz), snrLabel(lastSnrDb_, hasRecentSnr)));
 }
@@ -1463,6 +1542,7 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
 void MainWindow::appendTranscript(const QString &speaker, const QString &text)
 {
     insertTranscriptLine(transcriptLine(speaker, text));
+    recordChatMessage(QStringLiteral("out"), speaker, text);
 }
 
 void MainWindow::appendIncomingTranscript(const QString &speaker, const QString &text)
@@ -1473,11 +1553,13 @@ void MainWindow::appendIncomingTranscript(const QString &speaker, const QString 
         partialRxVisible_ = false;
         partialRxBlockNumber_ = -1;
         partialRxTimeLabel_.clear();
+        recordChatMessage(QStringLiteral("in"), speaker, text);
         return;
     }
 
     clearPartialIncoming();
     insertTranscriptLine(line);
+    recordChatMessage(QStringLiteral("in"), speaker, text);
 }
 
 void MainWindow::appendSystemLine(const QString &text)
