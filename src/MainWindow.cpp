@@ -38,7 +38,7 @@
 
 namespace
 {
-constexpr int kChatChunkChars = 32;
+constexpr int kChatChunkChars = 8;
 
 QString bandwidthLabel(int bandwidthHz)
 {
@@ -1402,7 +1402,7 @@ void MainWindow::confirmSentTranscript(const QString &messageId, int deliveredCh
         if (setTranscriptBlockColorRange(state.blockNumber,
                                          state.textStart + state.deliveredChars,
                                          newChars,
-                                         QColor(QStringLiteral("#006400"))))
+                                         QColor(QStringLiteral("#007A1A"))))
         {
             state.deliveredChars = targetChars;
         }
@@ -1574,12 +1574,17 @@ bool MainWindow::setTranscriptBlockColorRange(int blockNumber, int start, int le
     if (!block.isValid())
         return false;
 
-    QTextCursor cursor(block);
-    cursor.movePosition(QTextCursor::Right, QTextCursor::MoveAnchor, start);
-    cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, length);
+    const int blockTextLength = qMax(0, block.length() - 1);
+    if (start >= blockTextLength)
+        return false;
+
+    const int boundedLength = qMin(length, blockTextLength - start);
+    QTextCursor cursor(transcript_->document());
+    cursor.setPosition(block.position() + start);
+    cursor.setPosition(block.position() + start + boundedLength, QTextCursor::KeepAnchor);
     QTextCharFormat format;
     format.setForeground(color);
-    cursor.mergeCharFormat(format);
+    cursor.setCharFormat(format);
     transcript_->verticalScrollBar()->setValue(transcript_->verticalScrollBar()->maximum());
     return true;
 }
