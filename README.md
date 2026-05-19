@@ -48,7 +48,7 @@ MCHAT1 <payload-bytes>
 
 The header lets the receiver know the total message size before the text has fully arrived, so the GUI can show receive progress while still previewing already decoded UTF-8 text. Newlines inside text are JSON-escaped. The decoder still accepts the older newline-delimited JSON format for compatibility.
 
-Received messages with an `id` are acknowledged with a compact `ack` frame:
+Long local messages are sent as ordered chunks using the same `id`, with `offset`, `total`, and `final` fields. Received messages with an `id` are acknowledged with a compact `ack` frame:
 
 ```text
 MCHAT1 <payload-bytes>

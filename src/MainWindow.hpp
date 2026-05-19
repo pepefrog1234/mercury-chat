@@ -7,6 +7,7 @@
 #include <QByteArray>
 #include <QDateTime>
 #include <QHash>
+#include <QList>
 #include <QMainWindow>
 #include <QString>
 
@@ -25,6 +26,7 @@ class QTextEdit;
 class QTimer;
 class QCloseEvent;
 class QVariant;
+struct ChatMessage;
 struct ChatPartialMessage;
 
 class MainWindow : public QMainWindow
@@ -73,6 +75,9 @@ private:
     bool replaceTranscriptBlock(int blockNumber, const QString &line);
     void confirmSentTranscript(const QString &messageId, int deliveredChars);
     void sendReceiveAck(const QString &messageId, int receivedChars, bool force);
+    void queueOutgoingMessage(const QString &messageId, const QString &from, const QString &text);
+    void sendNextOutgoingChunk();
+    bool appendIncomingChunk(const ChatMessage &message);
     bool setTranscriptBlockColorRange(int blockNumber, int start, int length, const QColor &color);
     void autoInitializeStation();
     void markStationSettingsDirty();
@@ -123,6 +128,26 @@ private:
         int deliveredChars = 0;
     };
     QHash<QString, SentTranscriptState> pendingSentBlocks_;
+    struct OutgoingMessageState
+    {
+        QString from;
+        QString text;
+        int nextOffset = 0;
+        int inFlightEnd = 0;
+        bool awaitingAck = false;
+    };
+    QHash<QString, OutgoingMessageState> outgoingMessages_;
+    QList<QString> outgoingMessageOrder_;
+    QString activeOutgoingMessageId_;
+    struct IncomingMessageState
+    {
+        QString from;
+        QString text;
+        QString timeLabel;
+        int blockNumber = -1;
+        int totalChars = -1;
+    };
+    QHash<QString, IncomingMessageState> incomingMessages_;
     QString currentRxAckId_;
     int currentRxAckChars_ = 0;
     bool transmitProgressActive_ = false;

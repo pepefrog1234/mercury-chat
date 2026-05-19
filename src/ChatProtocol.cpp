@@ -206,6 +206,28 @@ QString previewStringField(const QByteArray &bytes, const char *key)
     return decodeJsonStringPrefix(bytes, fieldStart + needle.size());
 }
 
+int previewIntField(const QByteArray &bytes, const char *key, int fallback = 0)
+{
+    const QByteArray needle = QByteArray("\"") + key + "\":";
+    qsizetype valueStart = bytes.indexOf(needle);
+    if (valueStart < 0)
+        return fallback;
+
+    valueStart += needle.size();
+    while (valueStart < bytes.size() && bytes.at(valueStart) == ' ')
+        ++valueStart;
+
+    qsizetype valueEnd = valueStart;
+    while (valueEnd < bytes.size() && bytes.at(valueEnd) >= '0' && bytes.at(valueEnd) <= '9')
+        ++valueEnd;
+    if (valueEnd == valueStart)
+        return fallback;
+
+    bool ok = false;
+    const int value = bytes.mid(valueStart, valueEnd - valueStart).toInt(&ok);
+    return ok ? value : fallback;
+}
+
 QByteArray encodeFrame(const QJsonObject &object)
 {
     QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact);
@@ -228,6 +250,31 @@ QByteArray ChatProtocol::encodeTextMessage(const QString &from, const QString &t
     object.insert(QStringLiteral("type"), QStringLiteral("msg"));
     if (!messageId.trimmed().isEmpty())
         object.insert(QStringLiteral("id"), messageId.trimmed());
+    object.insert(QStringLiteral("from"), normalizeCallsign(from));
+    object.insert(QStringLiteral("time"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    object.insert(QStringLiteral("text"), text);
+
+    return encodeFrame(object);
+}
+
+QByteArray ChatProtocol::encodeTextChunk(const QString &from,
+                                         const QString &messageId,
+                                         int offset,
+                                         int totalChars,
+                                         const QString &text,
+                                         bool finalChunk)
+{
+    const QString trimmedId = messageId.trimmed();
+    if (trimmedId.isEmpty() || offset < 0 || totalChars < 0)
+        return {};
+
+    QJsonObject object;
+    object.insert(QStringLiteral("v"), 1);
+    object.insert(QStringLiteral("type"), QStringLiteral("msg"));
+    object.insert(QStringLiteral("id"), trimmedId);
+    object.insert(QStringLiteral("offset"), offset);
+    object.insert(QStringLiteral("total"), totalChars);
+    object.insert(QStringLiteral("final"), finalChunk);
     object.insert(QStringLiteral("from"), normalizeCallsign(from));
     object.insert(QStringLiteral("time"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
     object.insert(QStringLiteral("text"), text);
@@ -342,6 +389,7 @@ ChatPartialMessage ChatProtocol::previewIncompleteMessage(const QByteArray &buff
     }
 
     preview.id = previewStringField(visibleBuffer, "id").trimmed();
+    preview.offset = previewIntField(visibleBuffer, "offset", 0);
     preview.from = normalizeCallsign(previewStringField(visibleBuffer, "from"));
     preview.text = previewStringField(visibleBuffer, "text");
     preview.active = !preview.text.isEmpty();
@@ -400,8 +448,11 @@ ChatMessage ChatProtocol::decodeLine(const QByteArray &line)
     ChatMessage message;
     message.kind = ChatMessage::Kind::Text;
     message.id = object.value(QStringLiteral("id")).toString().trimmed();
+    message.offset = object.value(QStringLiteral("offset")).toInt(0);
     message.from = normalizeCallsign(object.value(QStringLiteral("from")).toString());
     message.text = object.value(QStringLiteral("text")).toString();
+    message.totalChars = object.value(QStringLiteral("total")).toInt(message.text.size());
+    message.finalChunk = object.value(QStringLiteral("final")).toBool(true);
     message.timestampUtc = QDateTime::fromString(object.value(QStringLiteral("time")).toString(), Qt::ISODateWithMs);
     if (!message.timestampUtc.isValid())
         message.timestampUtc = QDateTime::currentDateTimeUtc();

@@ -54,6 +54,23 @@ int main(int argc, char **argv)
     if (!expect(messages.first().from == QStringLiteral("TESTB"), "ack sender should normalize"))
         return 1;
 
+    const QString chunkMessageId = ChatProtocol::createMessageId();
+    const QByteArray chunkEncoded =
+        ChatProtocol::encodeTextChunk(QStringLiteral("TESTA"), chunkMessageId, 3, 9, QStringLiteral("def"), false);
+    messages = ChatProtocol::appendAndDecode(buffer, chunkEncoded);
+    if (!expect(messages.size() == 1, "chunk frame should decode one message"))
+        return 1;
+    if (!expect(messages.first().id == chunkMessageId, "chunk id should decode"))
+        return 1;
+    if (!expect(messages.first().offset == 3, "chunk offset should decode"))
+        return 1;
+    if (!expect(messages.first().totalChars == 9, "chunk total should decode"))
+        return 1;
+    if (!expect(!messages.first().finalChunk, "chunk final flag should decode"))
+        return 1;
+    if (!expect(messages.first().text == QStringLiteral("def"), "chunk text should decode"))
+        return 1;
+
     const QByteArray legacyJsonLine = "{\"from\":\"TESTA\",\"text\":\"legacy\",\"time\":\"2026-01-01T00:00:00.000Z\",\"type\":\"msg\",\"v\":1}\n";
     messages = ChatProtocol::appendAndDecode(buffer, legacyJsonLine);
     if (!expect(messages.size() == 1, "legacy newline JSON should still decode"))
