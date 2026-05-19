@@ -51,16 +51,24 @@ int main(int argc, char **argv)
 
     buffer.clear();
     const QByteArray typing = ChatProtocol::encodeTypingNotification(QStringLiteral("testb"));
+    if (!expect(typing == QByteArray("MCHAT1 1\nT\n"), "typing notification should use compact one-byte payload"))
+        return 1;
     messages = ChatProtocol::appendAndDecode(buffer, typing);
     if (!expect(messages.size() == 1, "typing notification should decode one message"))
         return 1;
     if (!expect(messages.first().kind == ChatMessage::Kind::Typing, "typing notification should use Typing kind"))
         return 1;
-    if (!expect(messages.first().from == QStringLiteral("TESTB"), "typing callsign should normalize to uppercase"))
+    if (!expect(messages.first().from.isEmpty(), "compact typing notification should omit callsign"))
         return 1;
     if (!expect(messages.first().text.isEmpty(), "typing notification should not carry chat text"))
         return 1;
     if (!expect(buffer.isEmpty(), "buffer should be empty after typing notification decode"))
+        return 1;
+
+    messages = ChatProtocol::appendAndDecode(buffer, QByteArray("T\n"));
+    if (!expect(messages.size() == 1, "legacy raw T line should decode one message"))
+        return 1;
+    if (!expect(messages.first().kind == ChatMessage::Kind::Raw, "legacy raw T should not be treated as typing"))
         return 1;
 
     buffer.clear();

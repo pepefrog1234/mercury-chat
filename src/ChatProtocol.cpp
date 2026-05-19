@@ -224,13 +224,9 @@ QByteArray ChatProtocol::encodeTextMessage(const QString &from, const QString &t
 
 QByteArray ChatProtocol::encodeTypingNotification(const QString &from)
 {
-    QJsonObject object;
-    object.insert(QStringLiteral("v"), 1);
-    object.insert(QStringLiteral("type"), QStringLiteral("typing"));
-    object.insert(QStringLiteral("from"), normalizeCallsign(from));
-    object.insert(QStringLiteral("time"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    (void)from;
 
-    QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact);
+    const QByteArray payload("T", 1);
     QByteArray frame = QByteArray(kFrameMagic) + QByteArray::number(payload.size()) + '\n';
     frame.append(payload);
     frame.append('\n');
@@ -273,6 +269,15 @@ QList<ChatMessage> ChatProtocol::appendAndDecode(QByteArray &buffer, const QByte
 
             if (payload.trimmed().isEmpty())
                 continue;
+
+            if (payload == QByteArray("T", 1))
+            {
+                ChatMessage message;
+                message.kind = ChatMessage::Kind::Typing;
+                message.timestampUtc = QDateTime::currentDateTimeUtc();
+                messages.append(message);
+                continue;
+            }
 
             messages.append(decodeLine(payload));
             continue;
