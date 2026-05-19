@@ -6,10 +6,12 @@
 #include <QCompleter>
 #include <QComboBox>
 #include <QDateTime>
+#include <QEvent>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -151,6 +153,26 @@ void MainWindow::closeEvent(QCloseEvent *event)
 {
     saveSettings();
     QMainWindow::closeEvent(event);
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == messageEdit_ && event->type() == QEvent::KeyPress)
+    {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        const bool enterPressed = keyEvent->key() == Qt::Key_Return ||
+                                  keyEvent->key() == Qt::Key_Enter;
+        const Qt::KeyboardModifiers blockedModifiers =
+            Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
+        if (enterPressed && !(keyEvent->modifiers() & blockedModifiers))
+        {
+            if (sendButton_->isEnabled())
+                sendChatMessage();
+            return true;
+        }
+    }
+
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::buildUi()
@@ -435,6 +457,7 @@ void MainWindow::buildUi()
     messageEdit_ = new QPlainTextEdit(chatPage);
     messageEdit_->setPlaceholderText(QStringLiteral("Type UTF-8 text here"));
     messageEdit_->setFixedHeight(96);
+    messageEdit_->installEventFilter(this);
     typingIndicatorCheck_ = new QCheckBox(QStringLiteral("Send typing indicator"), chatPage);
     typingIndicatorCheck_->setChecked(true);
     typingStatusLabel_ = new QLabel(chatPage);

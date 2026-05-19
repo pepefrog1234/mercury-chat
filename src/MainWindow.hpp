@@ -23,6 +23,7 @@ class QTableWidget;
 class QTextEdit;
 class QTimer;
 class QCloseEvent;
+class QEvent;
 class QVariant;
 struct ChatPartialMessage;
 
@@ -37,6 +38,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void connectTnc();
