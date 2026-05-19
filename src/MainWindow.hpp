@@ -7,6 +7,7 @@
 #include <QByteArray>
 #include <QDateTime>
 #include <QMainWindow>
+#include <QQueue>
 #include <QString>
 
 class QCheckBox;
@@ -67,6 +68,10 @@ private:
     void appendStatusLine(const QString &text);
     void showPartialIncoming(const ChatPartialMessage &message);
     void clearPartialIncoming();
+    bool receiveInProgress() const;
+    bool trySendQueuedMessage();
+    void sendQueuedChatMessage(const QString &text);
+    void updateSendControls();
     void insertTranscriptLine(const QString &line, int *blockNumber = nullptr);
     bool replaceTranscriptBlock(int blockNumber, const QString &line);
     void autoInitializeStation();
@@ -116,6 +121,7 @@ private:
     bool receiveProgressActive_ = false;
     int transmitProgressTotalBytes_ = 0;
     int lastBufferBytes_ = 0;
+    QQueue<QString> outboundQueue_;
 
     QLineEdit *modemPathEdit_ = nullptr;
     QLineEdit *modemArgsEdit_ = nullptr;

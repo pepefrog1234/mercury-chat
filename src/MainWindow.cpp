@@ -675,6 +675,10 @@ void MainWindow::wireSignals()
         lastBufferBytes_ = bytes;
         bufferStatusLabel_->setText(QStringLiteral("%1 bytes").arg(bytes));
         updateTransmitProgress(bytes);
+        if (!transmitProgressActive_ && bytes == 0)
+            trySendQueuedMessage();
+        else
+            updateSendControls();
     });
     connect(&tnc_, &TncClient::snrUpdated, this, [this](double snr) {
         lastSnrDb_ = snr;
@@ -994,13 +998,10 @@ void MainWindow::sendChatMessage()
     if (text.trimmed().isEmpty())
         return;
 
-    const QString callsign = localCallsign();
-    const QByteArray payload = ChatProtocol::encodeTextMessage(callsign, text);
-    beginTransmitProgress(payload.size());
-    tnc_.sendPayload(payload);
-    tnc_.queryBuffer();
-    appendTranscript(callsign, text);
+    outboundQueue_.enqueue(text);
     messageEdit_->clear();
+    trySendQueuedMessage();
+    updateSendControls();
 }
 
 void MainWindow::onBeaconReceived(const QString &callsign, int bandwidthHz)
@@ -1074,6 +1075,8 @@ void MainWindow::onDataReceived(const QByteArray &bytes)
         clearPartialIncoming();
         if (decodedCompleteMessages && chatRxBuffer_.isEmpty())
             finishReceiveProgress();
+        else
+            trySendQueuedMessage();
     }
 }
 
@@ -1134,6 +1137,7 @@ void MainWindow::resetLinkStatus()
     lastBufferBytes_ = 0;
     chatRxBuffer_.clear();
     clearPartialIncoming();
+    outboundQueue_.clear();
     setTransferIdle();
     updateLinkControls();
 }
@@ -1141,11 +1145,10 @@ void MainWindow::resetLinkStatus()
 void MainWindow::updateLinkControls()
 {
     const bool controlConnected = tnc_.isControlConnected();
-    const bool dataConnected = tnc_.isDataConnected();
     const bool beaconAllowed = controlConnected && !arqConnected_;
 
     linkDisconnectButton_->setEnabled(controlConnected && arqConnected_);
-    sendButton_->setEnabled(dataConnected && arqConnected_);
+    updateSendControls();
     beaconSendButton_->setEnabled(beaconAllowed);
     autoBeaconCheck_->setEnabled(beaconAllowed);
     beaconIntervalSpin_->setEnabled(beaconAllowed);
@@ -1215,10 +1218,6 @@ void MainWindow::appendIncomingTranscript(const QString &speaker, const QString 
         partialRxVisible_ = false;
         partialRxBlockNumber_ = -1;
         partialRxTimeLabel_.clear();
-        if (!transmitProgressActive_)
-        {
-            finishReceiveProgress();
-        }
         return;
     }
 
@@ -1290,6 +1289,7 @@ void MainWindow::showPartialIncoming(const ChatPartialMessage &message)
             transferStatusLabel_->setText(QStringLiteral("RX %1 bytes").arg(message.bytesBuffered));
         }
     }
+    updateSendControls();
 
     if (!message.active)
         return;
@@ -1324,6 +1324,78 @@ void MainWindow::clearPartialIncoming()
     partialRxVisible_ = false;
     partialRxBlockNumber_ = -1;
     partialRxTimeLabel_.clear();
+}
+
+bool MainWindow::receiveInProgress() const
+{
+    return receiveProgressActive_ || partialRxVisible_ || !chatRxBuffer_.isEmpty();
+}
+
+bool MainWindow::trySendQueuedMessage()
+{
+    if (outboundQueue_.isEmpty())
+    {
+        updateSendControls();
+        return false;
+    }
+
+    if (!arqConnected_ || !tnc_.isDataConnected())
+    {
+        updateSendControls();
+        return false;
+    }
+
+    if (transmitProgressActive_ || receiveInProgress())
+    {
+        updateSendControls();
+        return false;
+    }
+
+    if (lastBufferBytes_ > 0)
+    {
+        tnc_.queryBuffer();
+        transferProgressBar_->setRange(0, 1);
+        transferProgressBar_->setValue(0);
+        transferStatusLabel_->setText(QStringLiteral("Queued: %1 message(s)").arg(outboundQueue_.size()));
+        updateSendControls();
+        return false;
+    }
+
+    sendQueuedChatMessage(outboundQueue_.dequeue());
+    updateSendControls();
+    return true;
+}
+
+void MainWindow::sendQueuedChatMessage(const QString &text)
+{
+    const QString callsign = localCallsign();
+    const QByteArray payload = ChatProtocol::encodeTextMessage(callsign, text);
+    beginTransmitProgress(payload.size());
+    tnc_.sendPayload(payload);
+    tnc_.queryBuffer();
+    appendTranscript(callsign, text);
+}
+
+void MainWindow::updateSendControls()
+{
+    const bool connected = tnc_.isDataConnected() && arqConnected_;
+    sendButton_->setEnabled(connected);
+
+    if (!connected)
+    {
+        sendButton_->setText(QStringLiteral("Send"));
+        return;
+    }
+
+    if (!outboundQueue_.isEmpty())
+    {
+        sendButton_->setText(QStringLiteral("Queue (%1)").arg(outboundQueue_.size()));
+        return;
+    }
+
+    sendButton_->setText((transmitProgressActive_ || receiveInProgress())
+                             ? QStringLiteral("Queue")
+                             : QStringLiteral("Send"));
 }
 
 void MainWindow::insertTranscriptLine(const QString &line, int *blockNumber)
@@ -1367,6 +1439,7 @@ void MainWindow::beginTransmitProgress(int totalBytes)
     transferProgressBar_->setRange(0, transmitProgressTotalBytes_);
     transferProgressBar_->setValue(0);
     transferStatusLabel_->setText(QStringLiteral("TX queued: %1 bytes").arg(transmitProgressTotalBytes_));
+    updateSendControls();
 }
 
 void MainWindow::updateTransmitProgress(int remainingBytes)
@@ -1410,6 +1483,15 @@ void MainWindow::finishTransmitProgress()
     transmitProgressSeenBuffer_ = false;
     transmitProgressSawPtt_ = false;
     transmitProgressTotalBytes_ = 0;
+
+    const ChatPartialMessage partial = ChatProtocol::previewIncompleteMessage(chatRxBuffer_);
+    if (partial.active || partial.totalBytesKnown)
+        showPartialIncoming(partial);
+
+    if (trySendQueuedMessage())
+        return;
+    if (receiveInProgress() || !outboundQueue_.isEmpty())
+        return;
     scheduleTransferIdle();
 }
 
@@ -1422,6 +1504,10 @@ void MainWindow::finishReceiveProgress()
     transferProgressBar_->setRange(0, 1);
     transferProgressBar_->setValue(1);
     transferStatusLabel_->setText(QStringLiteral("RX complete"));
+    if (trySendQueuedMessage())
+        return;
+    if (!outboundQueue_.isEmpty())
+        return;
     scheduleTransferIdle();
 }
 
@@ -1440,7 +1526,11 @@ void MainWindow::setTransferIdle()
     transferIdleTimer_->stop();
     transferProgressBar_->setRange(0, 1);
     transferProgressBar_->setValue(0);
-    transferStatusLabel_->setText(QStringLiteral("Idle"));
+    if (outboundQueue_.isEmpty())
+        transferStatusLabel_->setText(QStringLiteral("Idle"));
+    else
+        transferStatusLabel_->setText(QStringLiteral("Queued: %1 message(s)").arg(outboundQueue_.size()));
+    updateSendControls();
 }
 
 void MainWindow::updateBeaconRow(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr)
