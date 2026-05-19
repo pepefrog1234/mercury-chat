@@ -89,6 +89,7 @@ private:
     void stopLinkIdleTimer();
     void onLinkIdleTimeout();
     void updateBitrateLabels(int speedLevel, int bitsPerSecond);
+    void updateTxBitrateLabels(int speedLevel, int bitsPerSecond);
     void updateBeaconRow(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr);
     bool applyStationSettings(bool warnIfMissing);
     bool connectCat(bool interactive);
@@ -130,6 +131,8 @@ private:
     int lastBufferBytes_ = 0;
     int currentBitrateLevel_ = 0;
     int currentBitrateBps_ = 0;
+    int currentTxBitrateLevel_ = 0;
+    int currentTxBitrateBps_ = 0;
     QDateTime lastTypingIndicatorSentAt_;
     QQueue<QString> outboundQueue_;
 
@@ -162,6 +165,7 @@ private:
     QLabel *pttStatusLabel_ = nullptr;
     QLabel *bufferStatusLabel_ = nullptr;
     QLabel *snrStatusLabel_ = nullptr;
+    QLabel *txBitrateStatusLabel_ = nullptr;
     QLabel *bitrateStatusLabel_ = nullptr;
 
     QPushButton *beaconSendButton_ = nullptr;

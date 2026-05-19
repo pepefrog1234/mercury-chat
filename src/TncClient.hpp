@@ -41,6 +41,7 @@ signals:
     void bufferUpdated(int bytes);
     void snrUpdated(double snrDb);
     void bitrateUpdated(int speedLevel, int bitsPerSecond);
+    void txBitrateUpdated(int speedLevel, int bitsPerSecond);
     void dataReceived(const QByteArray &bytes);
 
 private slots:

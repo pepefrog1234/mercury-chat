@@ -22,7 +22,7 @@ Useful Mercury commands used here:
 
 Received `CQFRAME <call> <bw>` lines are shown in the beacon table. Double-click a beacon callsign to send `CONNECT <mycall> <theircall>`. The Beacons tab also accepts a manually entered remote callsign for direct ARQ connection attempts.
 
-Mercury Chat deliberately leaves Mercury's adaptive FreeDV mode selection alone. The GUI only sends the selected `BW...` token and advertises that token in beacons; it does not select DATAC modes, force speed levels, or override ARQ gear shifting. `BITRATE`, `SN`, `BUFFER`, and `PTT` lines from Mercury are treated as status telemetry.
+Mercury Chat deliberately leaves Mercury's adaptive FreeDV mode selection alone. The GUI only sends the selected `BW...` token and advertises that token in beacons; it does not select DATAC modes, force speed levels, or override ARQ gear shifting. `TXBITRATE`, `BITRATE`, `SN`, `BUFFER`, and `PTT` lines from Mercury are treated as status telemetry.
 
 The main `Chat` tab is kept for chat text plus beacon and link activity. Mercury process output, TNC control lines, CAT messages, and telemetry are shown in the separate `Modem Status` tab.
 

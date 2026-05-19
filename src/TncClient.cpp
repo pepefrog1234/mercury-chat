@@ -240,11 +240,18 @@ void TncClient::parseControlLine(const QString &line)
     {
         emit snrUpdated(parts.at(1).toDouble());
     }
-    else if (verb == QLatin1String("BITRATE"))
+    else if (verb == QLatin1String("BITRATE") || verb == QLatin1String("TXBITRATE"))
     {
-        static const QRegularExpression re(QStringLiteral("^BITRATE\\s+\\((\\d+)\\)\\s+(\\d+)\\s+BPS$"));
+        static const QRegularExpression re(QStringLiteral("^(TX)?BITRATE\\s+\\((\\d+)\\)\\s+(\\d+)\\s+BPS$"));
         const QRegularExpressionMatch match = re.match(line);
         if (match.hasMatch())
-            emit bitrateUpdated(match.captured(1).toInt(), match.captured(2).toInt());
+        {
+            const int speedLevel = match.captured(2).toInt();
+            const int bitsPerSecond = match.captured(3).toInt();
+            if (verb == QLatin1String("TXBITRATE"))
+                emit txBitrateUpdated(speedLevel, bitsPerSecond);
+            else
+                emit bitrateUpdated(speedLevel, bitsPerSecond);
+        }
     }
 }
