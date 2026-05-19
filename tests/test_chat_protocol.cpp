@@ -67,7 +67,10 @@ int main(int argc, char **argv)
         qCritical() << sqlError;
         return 1;
     }
-    if (!expect(store.recordChatMessage(QDateTime::currentDateTimeUtc(),
+    const QDateTime firstChatAt = QDateTime::currentDateTimeUtc().addSecs(-20);
+    const QDateTime secondChatAt = QDateTime::currentDateTimeUtc().addSecs(-10);
+    const QDateTime otherChatAt = QDateTime::currentDateTimeUtc();
+    if (!expect(store.recordChatMessage(firstChatAt,
                                         QStringLiteral("A"),
                                         QStringLiteral("out"),
                                         QStringLiteral("TESTA"),
@@ -82,10 +85,54 @@ int main(int argc, char **argv)
         qCritical() << sqlError;
         return 1;
     }
+    if (!expect(store.recordChatMessage(secondChatAt,
+                                        QStringLiteral("A"),
+                                        QStringLiteral("in"),
+                                        QStringLiteral("TESTA"),
+                                        QStringLiteral("TESTB"),
+                                        QStringLiteral("TESTA"),
+                                        QStringLiteral("TESTB"),
+                                        500,
+                                        QStringLiteral("reply"),
+                                        &sqlError),
+                "second chat log row should insert"))
+    {
+        qCritical() << sqlError;
+        return 1;
+    }
+    if (!expect(store.recordChatMessage(otherChatAt,
+                                        QStringLiteral("A"),
+                                        QStringLiteral("out"),
+                                        QStringLiteral("TESTA"),
+                                        QStringLiteral("TESTC"),
+                                        QStringLiteral("TESTA"),
+                                        QStringLiteral("TESTC"),
+                                        500,
+                                        QStringLiteral("other"),
+                                        &sqlError),
+                "other peer chat log row should insert"))
+    {
+        qCritical() << sqlError;
+        return 1;
+    }
+    const QList<SqlLogStore::ChatLogEntry> history = store.loadChatHistory(QStringLiteral("TESTB"), 10, &sqlError);
+    if (!expect(history.size() == 2, "chat history should load only requested peer"))
+        return 1;
+    if (!expect(history.at(0).body == QStringLiteral("hello"), "chat history should be chronological"))
+        return 1;
+    if (!expect(history.at(1).body == QStringLiteral("reply"), "chat history should include newer message second"))
+        return 1;
+    if (!expect(history.at(1).direction == QStringLiteral("in"), "chat history should preserve direction"))
+        return 1;
+    const QList<SqlLogStore::ChatLogEntry> limitedHistory = store.loadChatHistory(QStringLiteral("TESTB"), 1, &sqlError);
+    if (!expect(limitedHistory.size() == 1, "limited chat history should return one row"))
+        return 1;
+    if (!expect(limitedHistory.first().body == QStringLiteral("reply"), "limited chat history should keep newest row"))
+        return 1;
     store.close();
     if (!expectRowCount(sqlPath, QStringLiteral("beacon_events"), 1))
         return 1;
-    if (!expectRowCount(sqlPath, QStringLiteral("chat_messages"), 1))
+    if (!expectRowCount(sqlPath, QStringLiteral("chat_messages"), 3))
         return 1;
 
     QByteArray buffer;

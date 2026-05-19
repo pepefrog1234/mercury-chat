@@ -7,6 +7,8 @@
 #include <QUuid>
 #include <QVariant>
 
+#include <algorithm>
+
 SqlLogStore::SqlLogStore()
     : connectionName_(QStringLiteral("mercury-chat-%1")
                           .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)))
@@ -146,6 +148,52 @@ bool SqlLogStore::recordChatMessage(const QDateTime &messageAtUtc,
     return true;
 }
 
+QList<SqlLogStore::ChatLogEntry> SqlLogStore::loadChatHistory(const QString &remoteCallsign,
+                                                              int limit,
+                                                              QString *errorMessage) const
+{
+    QList<ChatLogEntry> entries;
+    if (!isOpen() || remoteCallsign.trimmed().isEmpty())
+        return entries;
+
+    int boundedLimit = limit;
+    if (boundedLimit <= 0)
+        boundedLimit = 200;
+    if (boundedLimit > 5000)
+        boundedLimit = 5000;
+
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral(
+        "SELECT message_at, direction, local_call, remote_call, body "
+        "FROM chat_messages "
+        "WHERE remote_call = ? COLLATE NOCASE "
+        "ORDER BY message_at DESC, id DESC "
+        "LIMIT ?"));
+    query.addBindValue(remoteCallsign);
+    query.addBindValue(boundedLimit);
+
+    if (!query.exec())
+    {
+        if (errorMessage)
+            *errorMessage = query.lastError().text();
+        return entries;
+    }
+
+    while (query.next())
+    {
+        ChatLogEntry entry;
+        entry.messageAtUtc = parseTimestampText(query.value(0).toString());
+        entry.direction = query.value(1).toString();
+        entry.localCallsign = query.value(2).toString();
+        entry.remoteCallsign = query.value(3).toString();
+        entry.body = query.value(4).toString();
+        entries.append(entry);
+    }
+
+    std::reverse(entries.begin(), entries.end());
+    return entries;
+}
+
 bool SqlLogStore::initializeSchema(QString *errorMessage)
 {
     if (!execStatement(QStringLiteral("PRAGMA foreign_keys = ON"), errorMessage))
@@ -225,4 +273,12 @@ QString SqlLogStore::timestampText(const QDateTime &dateTimeUtc)
     if (!normalized.isValid())
         normalized = QDateTime::currentDateTimeUtc();
     return normalized.toUTC().toString(Qt::ISODateWithMs);
+}
+
+QDateTime SqlLogStore::parseTimestampText(const QString &text)
+{
+    QDateTime parsed = QDateTime::fromString(text, Qt::ISODateWithMs);
+    if (parsed.isValid())
+        return parsed.toUTC();
+    return {};
 }

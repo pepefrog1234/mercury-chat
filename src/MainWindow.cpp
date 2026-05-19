@@ -45,6 +45,7 @@ namespace
 constexpr int kLinkIdleDisconnectMs = 5 * 60 * 1000;
 constexpr int kTypingIndicatorMinIntervalMs = 15000;
 constexpr int kRemoteTypingVisibleMs = 15000;
+constexpr int kChatHistoryLimit = 500;
 
 struct AudioDeviceChoice
 {
@@ -98,6 +99,13 @@ QString durationLabel(qint64 totalSeconds)
 QString transcriptLine(const QString &speaker, const QString &text, const QString &timeLabel = utcTimeLabel())
 {
     return QStringLiteral("[%1] %2: %3").arg(timeLabel, speaker, text);
+}
+
+QString historyTimeLabel(const QDateTime &messageAtUtc)
+{
+    if (!messageAtUtc.isValid())
+        return utcTimeLabel();
+    return messageAtUtc.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
 }
 
 QString systemTranscriptLine(const QString &text)
@@ -836,6 +844,41 @@ void MainWindow::recordChatMessage(const QString &direction, const QString &spea
     }
 }
 
+void MainWindow::loadChatHistoryForPeer(const QString &peerCallsign)
+{
+    clearPartialIncoming();
+    transcript_->clear();
+
+    const QString normalizedPeer = ChatProtocol::normalizeCallsign(peerCallsign);
+    if (normalizedPeer.isEmpty() || !sqlLog_.isOpen())
+        return;
+
+    QString error;
+    const QList<SqlLogStore::ChatLogEntry> history =
+        sqlLog_.loadChatHistory(normalizedPeer, kChatHistoryLimit, &error);
+    if (!error.isEmpty())
+    {
+        appendStatusLine(QStringLiteral("SQLite chat history load failed: %1").arg(error));
+        return;
+    }
+
+    for (const SqlLogStore::ChatLogEntry &entry : history)
+    {
+        const bool outgoing = entry.direction == QLatin1String("out");
+        const QString speaker = outgoing
+                                    ? (entry.localCallsign.isEmpty() ? localCallsign() : entry.localCallsign)
+                                    : (entry.remoteCallsign.isEmpty() ? normalizedPeer : entry.remoteCallsign);
+        insertTranscriptLine(transcriptLine(speaker, entry.body, historyTimeLabel(entry.messageAtUtc)));
+    }
+
+    if (!history.isEmpty())
+    {
+        appendStatusLine(QStringLiteral("Loaded %1 chat history row(s) with %2")
+                             .arg(history.size())
+                             .arg(normalizedPeer));
+    }
+}
+
 void MainWindow::wireSignals()
 {
     connect(modemStartButton_, &QPushButton::clicked, this, &MainWindow::startModem);
@@ -1365,6 +1408,7 @@ void MainWindow::onLinkConnected(const QString &source, const QString &destinati
     restartLinkIdleTimer();
     beaconTimer_->stop();
     updateLinkControls();
+    loadChatHistoryForPeer(peerCallsign_);
     appendSystemLine(QStringLiteral("ARQ connected: %1 -> %2, %3").arg(source, destination, bandwidthLabel(bandwidthHz)));
 }
 

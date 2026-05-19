@@ -70,6 +70,7 @@ private:
     QString defaultDatabasePath() const;
     void recordBeaconEvent(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr);
     void recordChatMessage(const QString &direction, const QString &speaker, const QString &text);
+    void loadChatHistoryForPeer(const QString &peerCallsign);
     void appendTranscript(const QString &speaker, const QString &text);
     void appendIncomingTranscript(const QString &speaker, const QString &text);
     void appendSystemLine(const QString &text);

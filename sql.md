@@ -1,6 +1,9 @@
 # Mercury Chat SQLite schema
 
 Mercury Chat stores received beacon events and completed chat text messages in SQLite.
+When an ARQ link is established, the chat window loads the latest 500 stored
+messages for that peer callsign from this database before showing the new
+connection status line.
 
 ## Database path
 

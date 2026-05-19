@@ -1,12 +1,22 @@
 #pragma once
 
 #include <QDateTime>
+#include <QList>
 #include <QSqlDatabase>
 #include <QString>
 
 class SqlLogStore
 {
 public:
+    struct ChatLogEntry
+    {
+        QDateTime messageAtUtc;
+        QString direction;
+        QString localCallsign;
+        QString remoteCallsign;
+        QString body;
+    };
+
     SqlLogStore();
     ~SqlLogStore();
 
@@ -35,10 +45,15 @@ public:
                            const QString &body,
                            QString *errorMessage = nullptr);
 
+    QList<ChatLogEntry> loadChatHistory(const QString &remoteCallsign,
+                                        int limit,
+                                        QString *errorMessage = nullptr) const;
+
 private:
     bool initializeSchema(QString *errorMessage);
     bool execStatement(const QString &sql, QString *errorMessage);
     static QString timestampText(const QDateTime &dateTimeUtc);
+    static QDateTime parseTimestampText(const QString &text);
 
     QSqlDatabase database_;
     QString connectionName_;
