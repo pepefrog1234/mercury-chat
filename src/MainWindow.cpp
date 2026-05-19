@@ -593,8 +593,8 @@ void MainWindow::buildUi()
     transcript_ = new QTextEdit(chatPage);
     transcript_->setReadOnly(true);
     transcript_->setAcceptRichText(false);
+    auto *messageLabel = new QLabel(QStringLiteral("輸入訊息："), chatPage);
     messageEdit_ = new QPlainTextEdit(chatPage);
-    messageEdit_->setPlaceholderText(QStringLiteral("Type UTF-8 text here"));
     messageEdit_->setFixedHeight(96);
     messageEdit_->installEventFilter(this);
     typingIndicatorCheck_ = new QCheckBox(QStringLiteral("Send typing indicator"), chatPage);
@@ -626,6 +626,7 @@ void MainWindow::buildUi()
     sendButton_->setEnabled(false);
 
     chatLayout->addWidget(transcript_, 1);
+    chatLayout->addWidget(messageLabel);
     chatLayout->addWidget(messageEdit_);
     chatLayout->addWidget(chatOptionRow);
     chatLayout->addWidget(transferRow);
