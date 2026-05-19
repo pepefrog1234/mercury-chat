@@ -69,9 +69,6 @@ private:
     void showPartialIncoming(const ChatPartialMessage &message);
     void clearPartialIncoming();
     bool receiveInProgress() const;
-    bool receiveTurnHoldActive() const;
-    void startReceiveTurnHold();
-    void stopReceiveTurnHold();
     bool trySendQueuedMessage();
     void sendQueuedChatMessage(const QString &text);
     void updateSendControls();
@@ -85,6 +82,9 @@ private:
     void finishReceiveProgress();
     void scheduleTransferIdle();
     void setTransferIdle();
+    void restartLinkIdleTimer();
+    void stopLinkIdleTimer();
+    void onLinkIdleTimeout();
     void updateBeaconRow(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr);
     bool applyStationSettings(bool warnIfMissing);
     bool connectCat(bool interactive);
@@ -165,8 +165,8 @@ private:
     QTimer *beaconTimer_ = nullptr;
     QTimer *tncRetryTimer_ = nullptr;
     QTimer *linkDurationTimer_ = nullptr;
+    QTimer *linkIdleTimer_ = nullptr;
     QTimer *transferIdleTimer_ = nullptr;
-    QTimer *receiveTurnHoldTimer_ = nullptr;
     int tncRetryAttempts_ = 0;
 
     QTextEdit *transcript_ = nullptr;
