@@ -36,6 +36,8 @@
 
 namespace
 {
+constexpr int kReceiveTurnHoldMs = 5 * 60 * 1000;
+
 QString bandwidthLabel(int bandwidthHz)
 {
     return QStringLiteral("%1 Hz").arg(bandwidthHz);
@@ -463,6 +465,9 @@ void MainWindow::buildUi()
     transferIdleTimer_ = new QTimer(this);
     transferIdleTimer_->setSingleShot(true);
     transferIdleTimer_->setInterval(2500);
+    receiveTurnHoldTimer_ = new QTimer(this);
+    receiveTurnHoldTimer_->setSingleShot(true);
+    receiveTurnHoldTimer_->setInterval(kReceiveTurnHoldMs);
 }
 
 void MainWindow::loadSettings()
@@ -616,6 +621,10 @@ void MainWindow::wireSignals()
     connect(tncRetryTimer_, &QTimer::timeout, this, &MainWindow::retryTncConnection);
     connect(linkDurationTimer_, &QTimer::timeout, this, &MainWindow::updateLinkDuration);
     connect(transferIdleTimer_, &QTimer::timeout, this, &MainWindow::setTransferIdle);
+    connect(receiveTurnHoldTimer_, &QTimer::timeout, this, [this]() {
+        trySendQueuedMessage();
+        updateSendControls();
+    });
 
     connect(&tnc_, &TncClient::connectionStateChanged, this, &MainWindow::updateTncState);
     connect(&tnc_, &TncClient::statusMessage, this, [this](const QString &message) {
@@ -1138,6 +1147,7 @@ void MainWindow::resetLinkStatus()
     chatRxBuffer_.clear();
     clearPartialIncoming();
     outboundQueue_.clear();
+    stopReceiveTurnHold();
     setTransferIdle();
     updateLinkControls();
 }
@@ -1271,6 +1281,8 @@ void MainWindow::markStationSettingsDirty()
 
 void MainWindow::showPartialIncoming(const ChatPartialMessage &message)
 {
+    startReceiveTurnHold();
+
     if (!transmitProgressActive_)
     {
         transferIdleTimer_->stop();
@@ -1331,6 +1343,27 @@ bool MainWindow::receiveInProgress() const
     return receiveProgressActive_ || partialRxVisible_ || !chatRxBuffer_.isEmpty();
 }
 
+bool MainWindow::receiveTurnHoldActive() const
+{
+    return receiveTurnHoldTimer_ && receiveTurnHoldTimer_->isActive();
+}
+
+void MainWindow::startReceiveTurnHold()
+{
+    if (!arqConnected_ || !receiveTurnHoldTimer_)
+        return;
+
+    receiveTurnHoldTimer_->start();
+    updateSendControls();
+}
+
+void MainWindow::stopReceiveTurnHold()
+{
+    if (receiveTurnHoldTimer_)
+        receiveTurnHoldTimer_->stop();
+    updateSendControls();
+}
+
 bool MainWindow::trySendQueuedMessage()
 {
     if (outboundQueue_.isEmpty())
@@ -1347,6 +1380,19 @@ bool MainWindow::trySendQueuedMessage()
 
     if (transmitProgressActive_ || receiveInProgress())
     {
+        updateSendControls();
+        return false;
+    }
+
+    if (receiveTurnHoldActive())
+    {
+        const int remainingSeconds = (receiveTurnHoldTimer_->remainingTime() + 999) / 1000;
+        transferIdleTimer_->stop();
+        transferProgressBar_->setRange(0, 1);
+        transferProgressBar_->setValue(0);
+        transferStatusLabel_->setText(QStringLiteral("Queued: %1 message(s), peer turn hold %2")
+                                          .arg(outboundQueue_.size())
+                                          .arg(durationLabel(remainingSeconds)));
         updateSendControls();
         return false;
     }
@@ -1368,6 +1414,8 @@ bool MainWindow::trySendQueuedMessage()
 
 void MainWindow::sendQueuedChatMessage(const QString &text)
 {
+    stopReceiveTurnHold();
+
     const QString callsign = localCallsign();
     const QByteArray payload = ChatProtocol::encodeTextMessage(callsign, text);
     beginTransmitProgress(payload.size());
@@ -1393,9 +1441,8 @@ void MainWindow::updateSendControls()
         return;
     }
 
-    sendButton_->setText((transmitProgressActive_ || receiveInProgress())
-                             ? QStringLiteral("Queue")
-                             : QStringLiteral("Send"));
+    const bool busy = transmitProgressActive_ || receiveInProgress() || receiveTurnHoldActive();
+    sendButton_->setText(busy ? QStringLiteral("Queue") : QStringLiteral("Send"));
 }
 
 void MainWindow::insertTranscriptLine(const QString &line, int *blockNumber)
@@ -1500,6 +1547,7 @@ void MainWindow::finishReceiveProgress()
     if (transmitProgressActive_)
         return;
 
+    startReceiveTurnHold();
     receiveProgressActive_ = false;
     transferProgressBar_->setRange(0, 1);
     transferProgressBar_->setValue(1);

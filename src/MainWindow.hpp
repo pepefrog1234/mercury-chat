@@ -69,6 +69,9 @@ private:
     void showPartialIncoming(const ChatPartialMessage &message);
     void clearPartialIncoming();
     bool receiveInProgress() const;
+    bool receiveTurnHoldActive() const;
+    void startReceiveTurnHold();
+    void stopReceiveTurnHold();
     bool trySendQueuedMessage();
     void sendQueuedChatMessage(const QString &text);
     void updateSendControls();
@@ -163,6 +166,7 @@ private:
     QTimer *tncRetryTimer_ = nullptr;
     QTimer *linkDurationTimer_ = nullptr;
     QTimer *transferIdleTimer_ = nullptr;
+    QTimer *receiveTurnHoldTimer_ = nullptr;
     int tncRetryAttempts_ = 0;
 
     QTextEdit *transcript_ = nullptr;
