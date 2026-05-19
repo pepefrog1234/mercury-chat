@@ -71,6 +71,9 @@ private:
     bool receiveInProgress() const;
     bool trySendQueuedMessage();
     void sendQueuedChatMessage(const QString &text);
+    void maybeSendTypingIndicator();
+    void showRemoteTypingIndicator(const QString &from);
+    void clearRemoteTypingIndicator();
     void updateSendControls();
     void insertTranscriptLine(const QString &line, int *blockNumber = nullptr);
     bool replaceTranscriptBlock(int blockNumber, const QString &line);
@@ -124,6 +127,7 @@ private:
     bool receiveProgressActive_ = false;
     int transmitProgressTotalBytes_ = 0;
     int lastBufferBytes_ = 0;
+    QDateTime lastTypingIndicatorSentAt_;
     QQueue<QString> outboundQueue_;
 
     QLineEdit *modemPathEdit_ = nullptr;
@@ -167,10 +171,13 @@ private:
     QTimer *linkDurationTimer_ = nullptr;
     QTimer *linkIdleTimer_ = nullptr;
     QTimer *transferIdleTimer_ = nullptr;
+    QTimer *remoteTypingTimer_ = nullptr;
     int tncRetryAttempts_ = 0;
 
     QTextEdit *transcript_ = nullptr;
     QPlainTextEdit *messageEdit_ = nullptr;
+    QCheckBox *typingIndicatorCheck_ = nullptr;
+    QLabel *typingStatusLabel_ = nullptr;
     QLabel *transferStatusLabel_ = nullptr;
     QProgressBar *transferProgressBar_ = nullptr;
     QPushButton *sendButton_ = nullptr;

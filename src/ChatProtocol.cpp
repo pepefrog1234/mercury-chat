@@ -222,6 +222,21 @@ QByteArray ChatProtocol::encodeTextMessage(const QString &from, const QString &t
     return frame;
 }
 
+QByteArray ChatProtocol::encodeTypingNotification(const QString &from)
+{
+    QJsonObject object;
+    object.insert(QStringLiteral("v"), 1);
+    object.insert(QStringLiteral("type"), QStringLiteral("typing"));
+    object.insert(QStringLiteral("from"), normalizeCallsign(from));
+    object.insert(QStringLiteral("time"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+
+    QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact);
+    QByteArray frame = QByteArray(kFrameMagic) + QByteArray::number(payload.size()) + '\n';
+    frame.append(payload);
+    frame.append('\n');
+    return frame;
+}
+
 QList<ChatMessage> ChatProtocol::appendAndDecode(QByteArray &buffer, const QByteArray &chunk)
 {
     QList<ChatMessage> messages;
@@ -344,7 +359,19 @@ ChatMessage ChatProtocol::decodeLine(const QByteArray &line)
     }
 
     const QJsonObject object = document.object();
-    if (object.value(QStringLiteral("type")).toString() != QLatin1String("msg"))
+    const QString type = object.value(QStringLiteral("type")).toString();
+    if (type == QLatin1String("typing"))
+    {
+        ChatMessage message;
+        message.kind = ChatMessage::Kind::Typing;
+        message.from = normalizeCallsign(object.value(QStringLiteral("from")).toString());
+        message.timestampUtc = QDateTime::fromString(object.value(QStringLiteral("time")).toString(), Qt::ISODateWithMs);
+        if (!message.timestampUtc.isValid())
+            message.timestampUtc = QDateTime::currentDateTimeUtc();
+        return message;
+    }
+
+    if (type != QLatin1String("msg"))
     {
         return rawMessageFromLine(line);
     }

@@ -37,6 +37,8 @@
 namespace
 {
 constexpr int kLinkIdleDisconnectMs = 5 * 60 * 1000;
+constexpr int kTypingIndicatorMinIntervalMs = 5000;
+constexpr int kRemoteTypingVisibleMs = 8000;
 
 QString bandwidthLabel(int bandwidthHz)
 {
@@ -417,6 +419,10 @@ void MainWindow::buildUi()
     messageEdit_ = new QPlainTextEdit(chatPage);
     messageEdit_->setPlaceholderText(QStringLiteral("Type UTF-8 text here"));
     messageEdit_->setFixedHeight(96);
+    typingIndicatorCheck_ = new QCheckBox(QStringLiteral("Send typing indicator"), chatPage);
+    typingIndicatorCheck_->setChecked(true);
+    typingStatusLabel_ = new QLabel(chatPage);
+    typingStatusLabel_->setText(QString());
     transferStatusLabel_ = new QLabel(QStringLiteral("Idle"), chatPage);
     transferProgressBar_ = new QProgressBar(chatPage);
     transferProgressBar_->setRange(0, 1);
@@ -427,11 +433,18 @@ void MainWindow::buildUi()
     transferLayout->setContentsMargins(0, 0, 0, 0);
     transferLayout->addWidget(transferStatusLabel_);
     transferLayout->addWidget(transferProgressBar_, 1);
+    auto *chatOptionRow = new QWidget(chatPage);
+    auto *chatOptionLayout = new QHBoxLayout(chatOptionRow);
+    chatOptionLayout->setContentsMargins(0, 0, 0, 0);
+    chatOptionLayout->addWidget(typingIndicatorCheck_);
+    chatOptionLayout->addStretch();
+    chatOptionLayout->addWidget(typingStatusLabel_);
     sendButton_ = new QPushButton(QStringLiteral("Send"), chatPage);
     sendButton_->setEnabled(false);
 
     chatLayout->addWidget(transcript_, 1);
     chatLayout->addWidget(messageEdit_);
+    chatLayout->addWidget(chatOptionRow);
     chatLayout->addWidget(transferRow);
     chatLayout->addWidget(sendButton_);
 
@@ -468,6 +481,9 @@ void MainWindow::buildUi()
     transferIdleTimer_ = new QTimer(this);
     transferIdleTimer_->setSingleShot(true);
     transferIdleTimer_->setInterval(2500);
+    remoteTypingTimer_ = new QTimer(this);
+    remoteTypingTimer_->setSingleShot(true);
+    remoteTypingTimer_->setInterval(kRemoteTypingVisibleMs);
 }
 
 void MainWindow::loadSettings()
@@ -494,6 +510,7 @@ void MainWindow::loadSettings()
     hostEdit_->setText(settings->value(QStringLiteral("tnc/host"), hostEdit_->text()).toString());
     basePortSpin_->setValue(settings->value(QStringLiteral("tnc/basePort"), basePortSpin_->value()).toInt());
     setComboCurrentData(bandwidthCombo_, settings->value(QStringLiteral("tnc/bandwidth"), selectedBandwidth()));
+    typingIndicatorCheck_->setChecked(settings->value(QStringLiteral("chat/sendTypingIndicator"), true).toBool());
 
     autoBeaconCheck_->setChecked(settings->value(QStringLiteral("beacon/auto"), autoBeaconCheck_->isChecked()).toBool());
     beaconIntervalSpin_->setValue(settings->value(QStringLiteral("beacon/intervalSeconds"), beaconIntervalSpin_->value()).toInt());
@@ -534,6 +551,7 @@ void MainWindow::saveSettings() const
     settings->setValue(QStringLiteral("tnc/host"), hostEdit_->text().trimmed());
     settings->setValue(QStringLiteral("tnc/basePort"), basePortSpin_->value());
     settings->setValue(QStringLiteral("tnc/bandwidth"), selectedBandwidth());
+    settings->setValue(QStringLiteral("chat/sendTypingIndicator"), typingIndicatorCheck_->isChecked());
 
     settings->setValue(QStringLiteral("beacon/auto"), autoBeaconCheck_->isChecked());
     settings->setValue(QStringLiteral("beacon/intervalSeconds"), beaconIntervalSpin_->value());
@@ -622,9 +640,16 @@ void MainWindow::wireSignals()
     connect(linkDurationTimer_, &QTimer::timeout, this, &MainWindow::updateLinkDuration);
     connect(linkIdleTimer_, &QTimer::timeout, this, &MainWindow::onLinkIdleTimeout);
     connect(transferIdleTimer_, &QTimer::timeout, this, &MainWindow::setTransferIdle);
+    connect(remoteTypingTimer_, &QTimer::timeout, this, &MainWindow::clearRemoteTypingIndicator);
+    connect(typingIndicatorCheck_, &QCheckBox::toggled, this, [this]() {
+        saveSettings();
+    });
     connect(messageEdit_, &QPlainTextEdit::textChanged, this, [this]() {
         if (arqConnected_)
+        {
             restartLinkIdleTimer();
+            maybeSendTypingIndicator();
+        }
     });
 
     connect(&tnc_, &TncClient::connectionStateChanged, this, &MainWindow::updateTncState);
@@ -1032,6 +1057,8 @@ void MainWindow::onLinkConnected(const QString &source, const QString &destinati
 {
     arqConnected_ = true;
     linkPending_ = false;
+    lastTypingIndicatorSentAt_ = {};
+    clearRemoteTypingIndicator();
     linkSource_ = source;
     linkDestination_ = destination;
     linkBandwidthHz_ = bandwidthHz;
@@ -1074,11 +1101,19 @@ void MainWindow::onDataReceived(const QByteArray &bytes)
     restartLinkIdleTimer();
 
     const QList<ChatMessage> messages = ChatProtocol::appendAndDecode(chatRxBuffer_, bytes);
-    const bool decodedCompleteMessages = !messages.isEmpty();
+    bool decodedContentMessages = false;
     for (const ChatMessage &message : messages)
     {
         const QString speaker = message.from.isEmpty() ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_) : message.from;
+        if (message.kind == ChatMessage::Kind::Typing)
+        {
+            showRemoteTypingIndicator(speaker);
+            continue;
+        }
+
+        clearRemoteTypingIndicator();
         appendIncomingTranscript(speaker, message.text);
+        decodedContentMessages = true;
     }
 
     const ChatPartialMessage partial = ChatProtocol::previewIncompleteMessage(chatRxBuffer_);
@@ -1087,7 +1122,7 @@ void MainWindow::onDataReceived(const QByteArray &bytes)
     else
     {
         clearPartialIncoming();
-        if (decodedCompleteMessages && chatRxBuffer_.isEmpty())
+        if (decodedContentMessages && chatRxBuffer_.isEmpty())
             finishReceiveProgress();
         else
             trySendQueuedMessage();
@@ -1149,8 +1184,10 @@ void MainWindow::resetLinkStatus()
     bitrateStatusLabel_->setText(QStringLiteral("-"));
     bufferStatusLabel_->setText(QStringLiteral("0 bytes"));
     lastBufferBytes_ = 0;
+    lastTypingIndicatorSentAt_ = {};
     chatRxBuffer_.clear();
     clearPartialIncoming();
+    clearRemoteTypingIndicator();
     outboundQueue_.clear();
     stopLinkIdleTimer();
     setTransferIdle();
@@ -1391,6 +1428,41 @@ void MainWindow::sendQueuedChatMessage(const QString &text)
     tnc_.sendPayload(payload);
     tnc_.queryBuffer();
     appendTranscript(callsign, text);
+}
+
+void MainWindow::maybeSendTypingIndicator()
+{
+    if (!typingIndicatorCheck_->isChecked() || !arqConnected_ || !tnc_.isDataConnected())
+        return;
+
+    if (messageEdit_->toPlainText().trimmed().isEmpty())
+        return;
+
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    if (lastTypingIndicatorSentAt_.isValid() &&
+        lastTypingIndicatorSentAt_.msecsTo(now) < kTypingIndicatorMinIntervalMs)
+    {
+        return;
+    }
+
+    lastTypingIndicatorSentAt_ = now;
+    tnc_.sendPayload(ChatProtocol::encodeTypingNotification(localCallsign()));
+    tnc_.queryBuffer();
+}
+
+void MainWindow::showRemoteTypingIndicator(const QString &from)
+{
+    const QString speaker = from.isEmpty()
+                                ? (peerCallsign_.isEmpty() ? QStringLiteral("Remote") : peerCallsign_)
+                                : from;
+    typingStatusLabel_->setText(QStringLiteral("%1 is typing...").arg(speaker));
+    remoteTypingTimer_->start();
+}
+
+void MainWindow::clearRemoteTypingIndicator()
+{
+    typingStatusLabel_->clear();
+    remoteTypingTimer_->stop();
 }
 
 void MainWindow::updateSendControls()

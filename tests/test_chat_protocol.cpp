@@ -50,6 +50,20 @@ int main(int argc, char **argv)
         return 1;
 
     buffer.clear();
+    const QByteArray typing = ChatProtocol::encodeTypingNotification(QStringLiteral("testb"));
+    messages = ChatProtocol::appendAndDecode(buffer, typing);
+    if (!expect(messages.size() == 1, "typing notification should decode one message"))
+        return 1;
+    if (!expect(messages.first().kind == ChatMessage::Kind::Typing, "typing notification should use Typing kind"))
+        return 1;
+    if (!expect(messages.first().from == QStringLiteral("TESTB"), "typing callsign should normalize to uppercase"))
+        return 1;
+    if (!expect(messages.first().text.isEmpty(), "typing notification should not carry chat text"))
+        return 1;
+    if (!expect(buffer.isEmpty(), "buffer should be empty after typing notification decode"))
+        return 1;
+
+    buffer.clear();
     const QByteArray partialEncoded =
         ChatProtocol::encodeTextMessage(QStringLiteral("TESTA"), QStringLiteral("眾神端坐高天原"));
     const qsizetype headerEnd = partialEncoded.indexOf('\n') + 1;

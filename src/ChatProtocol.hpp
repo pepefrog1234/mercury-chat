@@ -10,6 +10,7 @@ struct ChatMessage
     enum class Kind
     {
         Text,
+        Typing,
         Raw
     };
 
@@ -33,6 +34,7 @@ class ChatProtocol
 {
 public:
     static QByteArray encodeTextMessage(const QString &from, const QString &text);
+    static QByteArray encodeTypingNotification(const QString &from);
     static QList<ChatMessage> appendAndDecode(QByteArray &buffer, const QByteArray &chunk);
     static ChatPartialMessage previewIncompleteMessage(const QByteArray &buffer);
     static QString normalizeCallsign(const QString &callsign);
