@@ -58,13 +58,13 @@ jobs:
           if ("${{ matrix.arch }}" -eq "arm64") {
             python -m aqt install-qt windows desktop $env:QT_VERSION win64_msvc2022_64 `
               -O "$qtRoot" `
-              -m qtmultimedia qttools `
+              -m qtmultimedia `
               --timeout 30
           }
 
           python -m aqt install-qt windows desktop $env:QT_VERSION "${{ matrix.qt_arch }}" `
             -O "$qtRoot" `
-            -m qtmultimedia qttools `
+            -m qtmultimedia `
             --timeout 30
 
       - name: Configure
