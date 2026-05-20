@@ -140,19 +140,88 @@ jobs:
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
 
           Copy-Item "build-windows-${{ matrix.arch }}\Release\mercury-chat.exe" $packageDir
-          $deployTool = "$qtHost\bin\windeployqt.exe"
-          $deployArgs = @("--release", "--compiler-runtime", "--no-translations")
-          if ("${{ matrix.arch }}" -eq "arm64") {
-            $qtpaths = "$qtTarget\bin\qtpaths.bat"
-            if (!(Test-Path $qtpaths)) {
-              throw "Missing ARM64 target qtpaths.bat at $qtpaths"
+
+          function Copy-OptionalFile($source, $destDir) {
+            if (Test-Path $source) {
+              New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+              Copy-Item $source $destDir -Force
+            } else {
+              Write-Warning "Missing optional runtime file: $source"
             }
-            $deployArgs += @("--qtpaths", $qtpaths)
           }
-          $deployArgs += "$packageDir\mercury-chat.exe"
-          & $deployTool @deployArgs
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+
+          function Copy-QtRuntimeManually($qtPrefix, $destDir) {
+            foreach ($dll in @(
+              "Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll",
+              "Qt6Sql.dll", "Qt6Multimedia.dll", "Qt6OpenGL.dll", "Qt6Svg.dll",
+              "Qt6Xml.dll", "d3dcompiler_47.dll", "opengl32sw.dll"
+            )) {
+              Copy-OptionalFile "$qtPrefix\bin\$dll" $destDir
+            }
+
+            foreach ($rel in @(
+              "platforms\qwindows.dll",
+              "styles\qmodernwindowsstyle.dll",
+              "sqldrivers\qsqlite.dll",
+              "multimedia\ffmpegmediaplugin.dll",
+              "multimedia\windowsmediaplugin.dll",
+              "tls\qcertonlybackend.dll",
+              "tls\qschannelbackend.dll",
+              "networkinformation\qnetworklistmanager.dll",
+              "imageformats\qgif.dll",
+              "imageformats\qico.dll",
+              "imageformats\qjpeg.dll",
+              "imageformats\qsvg.dll",
+              "iconengines\qsvgicon.dll"
+            )) {
+              Copy-OptionalFile "$qtPrefix\plugins\$rel" "$destDir\plugins\$(Split-Path $rel -Parent)"
+            }
+
+            if ($env:VCToolsRedistDir) {
+              $crtDir = "$env:VCToolsRedistDir\arm64\Microsoft.VC143.CRT"
+              if (Test-Path $crtDir) {
+                Copy-Item "$crtDir\*.dll" $destDir -Force
+              } else {
+                Write-Warning "Missing ARM64 MSVC runtime directory: $crtDir"
+              }
+            }
+
+            Set-Content -Encoding UTF8 "$destDir\qt.conf" -Value @("[Paths]", "Plugins = plugins")
+          }
+
+          $manualDeploy = $false
+          if ("${{ matrix.arch }}" -eq "arm64") {
+            $qtpaths = @(
+              "$qtTarget\bin\qtpaths.bat",
+              "$qtTarget\bin\qtpaths.exe",
+              "$qtTarget\bin\qtpaths6.bat",
+              "$qtTarget\bin\qtpaths6.exe"
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+            if ($qtpaths) {
+              $deployArgs = @("--release", "--compiler-runtime", "--no-translations", "--qtpaths", $qtpaths, "$packageDir\mercury-chat.exe")
+              & "$qtHost\bin\windeployqt.exe" @deployArgs
+              if ($LASTEXITCODE -ne 0) {
+                Write-Warning "windeployqt failed for ARM64; falling back to manual runtime copy"
+                $manualDeploy = $true
+              }
+            } else {
+              Write-Warning "No ARM64 qtpaths helper found; falling back to manual runtime copy"
+              $manualDeploy = $true
+            }
+          } else {
+            & "$qtTarget\bin\windeployqt.exe" `
+              --release `
+              --compiler-runtime `
+              --no-translations `
+              "$packageDir\mercury-chat.exe"
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
+
+          if ($manualDeploy) {
+            Copy-QtRuntimeManually $qtTarget $packageDir
           }
 
           @"
