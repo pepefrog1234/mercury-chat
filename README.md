@@ -1,5 +1,7 @@
 # Mercury Chat
 
+[簡體中文](README.zh-CN.md)
+
 Mercury Chat 是給 Mercury HF 數據機使用的 Qt/C++ 聊天程式。它把數據機當成獨立行程啟動，再透過 Mercury 的 VARA 相容 TCP TNC 介面控制連線、信標與聊天資料。
 
 這個程式主要用於短波數位通訊測試與操作，支援：
