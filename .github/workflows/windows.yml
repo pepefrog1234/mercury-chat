@@ -11,6 +11,10 @@ on:
 
 env:
   QT_VERSION: "6.10.2"
+  MERCURY_MODEM_REPO: "pepefrog1234/mercury"
+  MERCURY_MODEM_TAG: "fork-c4272747"
+  MERCURY_MODEM_ASSET: "mercury-1.9.8-w64-c4272747.zip"
+  MERCURY_MODEM_COMMIT: "c4272747"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -125,6 +129,34 @@ jobs:
           $env:PATH = "$qtBin;$env:PATH"
           ctest --test-dir build-windows-${{ matrix.arch }} -C Release --output-on-failure
 
+      - name: Download forked Mercury modem
+        shell: pwsh
+        run: |
+          $downloadRoot = "$env:RUNNER_TEMP\mercury-modem"
+          New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
+
+          $repo = $env:MERCURY_MODEM_REPO
+          $tag = $env:MERCURY_MODEM_TAG
+          $asset = $env:MERCURY_MODEM_ASSET
+          $url = "https://github.com/$repo/releases/download/$tag/$asset"
+          $zipPath = "$downloadRoot\$asset"
+
+          Write-Host "Downloading forked Mercury modem: $url"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $downloadRoot -Force
+
+          $modemDir = Get-ChildItem -Path $downloadRoot -Directory -Recurse |
+            Where-Object { Test-Path (Join-Path $_.FullName "mercury.exe") } |
+            Select-Object -First 1
+
+          if (!$modemDir) {
+            Get-ChildItem -Path $downloadRoot -Recurse | ForEach-Object { Write-Host $_.FullName }
+            throw "Downloaded Mercury modem package does not contain mercury.exe"
+          }
+
+          "MODEM_PACKAGE_DIR=$($modemDir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Using Mercury modem package from $($modemDir.FullName)"
+
       - name: Package
         shell: pwsh
         run: |
@@ -140,6 +172,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
 
           Copy-Item "build-windows-${{ matrix.arch }}\Release\mercury-chat.exe" $packageDir
+          if ($env:MODEM_PACKAGE_DIR -and (Test-Path $env:MODEM_PACKAGE_DIR)) {
+            Copy-Item (Join-Path $env:MODEM_PACKAGE_DIR "*") $packageDir -Recurse -Force
+          } else {
+            throw "MODEM_PACKAGE_DIR was not set or does not exist"
+          }
 
           function Copy-OptionalFile($source, $destDir) {
             if (Test-Path $source) {
@@ -217,8 +254,11 @@ jobs:
 
           Build metadata:
             Mercury Chat commit: ${{ github.sha }}
+            Mercury modem commit: $env:MERCURY_MODEM_COMMIT
+            Mercury modem source: https://github.com/$env:MERCURY_MODEM_REPO/releases/tag/$env:MERCURY_MODEM_TAG
             Qt target: $env:QT_VERSION ${{ matrix.qt_arch }}
             Hamlib CAT support: disabled in CI package
+            Note: the bundled Mercury modem binary is Windows x64; on Windows ARM64 it runs under x64 emulation.
           "@ | Set-Content -Encoding UTF8 "$packageDir\README-WINDOWS.txt"
 
           Compress-Archive -Path $packageDir -DestinationPath "dist\$packageName.zip" -Force
