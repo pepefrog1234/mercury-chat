@@ -11,6 +11,7 @@ on:
 
 env:
   QT_VERSION: "6.10.2"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   windows:
@@ -45,7 +46,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
       - name: Install aqt
         run: python -m pip install --upgrade aqtinstall
@@ -54,10 +55,16 @@ jobs:
         shell: pwsh
         run: |
           $qtRoot = "$env:RUNNER_TEMP\Qt"
+          if ("${{ matrix.arch }}" -eq "arm64") {
+            python -m aqt install-qt windows desktop $env:QT_VERSION win64_msvc2022_64 `
+              -O "$qtRoot" `
+              -m qtmultimedia qttools `
+              --timeout 30
+          }
+
           python -m aqt install-qt windows desktop $env:QT_VERSION "${{ matrix.qt_arch }}" `
             -O "$qtRoot" `
-            -m qtmultimedia `
-            --autodesktop `
+            -m qtmultimedia qttools `
             --timeout 30
 
       - name: Configure
@@ -80,24 +87,41 @@ jobs:
 
       - name: Test
         if: matrix.run_tests
-        run: ctest --test-dir build-windows-${{ matrix.arch }} -C Release --output-on-failure
+        shell: pwsh
+        run: |
+          $qtBin = "$env:RUNNER_TEMP\Qt\$env:QT_VERSION\${{ matrix.qt_dir }}\bin"
+          $env:PATH = "$qtBin;$env:PATH"
+          ctest --test-dir build-windows-${{ matrix.arch }} -C Release --output-on-failure
 
       - name: Package
         shell: pwsh
         run: |
           $qtRoot = "$env:RUNNER_TEMP\Qt\$env:QT_VERSION"
           $qtTarget = "$qtRoot\${{ matrix.qt_dir }}"
+          $qtHost = "$qtRoot\msvc2022_64"
+          if (!(Test-Path $qtHost)) {
+            $qtHost = $qtTarget
+          }
           $shortSha = "${{ github.sha }}".Substring(0, 8)
           $packageName = "mercury-chat-0.1.0-windows-${{ matrix.arch }}-$shortSha"
           $packageDir = "dist\$packageName"
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
 
           Copy-Item "build-windows-${{ matrix.arch }}\Release\mercury-chat.exe" $packageDir
-          & "$qtTarget\bin\windeployqt.exe" `
-            --release `
-            --compiler-runtime `
-            --no-translations `
-            "$packageDir\mercury-chat.exe"
+          $deployTool = "$qtHost\bin\windeployqt.exe"
+          $deployArgs = @("--release", "--compiler-runtime", "--no-translations")
+          if ("${{ matrix.arch }}" -eq "arm64") {
+            $qtpaths = "$qtTarget\bin\qtpaths.bat"
+            if (!(Test-Path $qtpaths)) {
+              throw "Missing ARM64 target qtpaths.bat at $qtpaths"
+            }
+            $deployArgs += @("--qtpaths", $qtpaths)
+          }
+          $deployArgs += "$packageDir\mercury-chat.exe"
+          & $deployTool @deployArgs
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
           @"
           Mercury Chat Windows ${{ matrix.arch }} package
