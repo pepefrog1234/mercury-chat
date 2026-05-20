@@ -1,0 +1,122 @@
+name: Windows packages
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  QT_VERSION: "6.10.2"
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.arch }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            cmake_arch: x64
+            msvc_arch: x64
+            qt_arch: win64_msvc2022_64
+            qt_dir: msvc2022_64
+            run_tests: true
+          - arch: arm64
+            cmake_arch: ARM64
+            msvc_arch: amd64_arm64
+            qt_arch: win64_msvc2022_arm64_cross_compiled
+            qt_dir: msvc2022_arm64
+            run_tests: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install aqt
+        run: python -m pip install --upgrade aqtinstall
+
+      - name: Install Qt
+        shell: pwsh
+        run: |
+          $qtRoot = "$env:RUNNER_TEMP\Qt"
+          python -m aqt install-qt windows desktop $env:QT_VERSION "${{ matrix.qt_arch }}" `
+            -O "$qtRoot" `
+            -m qtmultimedia `
+            --autodesktop `
+            --timeout 30
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $qtRoot = "$env:RUNNER_TEMP\Qt\$env:QT_VERSION"
+          $qtTarget = "$qtRoot\${{ matrix.qt_dir }}"
+          $qtHost = "$qtRoot\msvc2022_64"
+          if (!(Test-Path $qtHost)) {
+            $qtHost = $qtTarget
+          }
+          cmake -S . -B build-windows-${{ matrix.arch }} `
+            -A "${{ matrix.cmake_arch }}" `
+            -DCMAKE_PREFIX_PATH="$qtTarget" `
+            -DQT_HOST_PATH="$qtHost" `
+            -DMERCURYCHAT_USE_HAMLIB=OFF
+
+      - name: Build
+        run: cmake --build build-windows-${{ matrix.arch }} --config Release --parallel
+
+      - name: Test
+        if: matrix.run_tests
+        run: ctest --test-dir build-windows-${{ matrix.arch }} -C Release --output-on-failure
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $qtRoot = "$env:RUNNER_TEMP\Qt\$env:QT_VERSION"
+          $qtTarget = "$qtRoot\${{ matrix.qt_dir }}"
+          $shortSha = "${{ github.sha }}".Substring(0, 8)
+          $packageName = "mercury-chat-0.1.0-windows-${{ matrix.arch }}-$shortSha"
+          $packageDir = "dist\$packageName"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+
+          Copy-Item "build-windows-${{ matrix.arch }}\Release\mercury-chat.exe" $packageDir
+          & "$qtTarget\bin\windeployqt.exe" `
+            --release `
+            --compiler-runtime `
+            --no-translations `
+            "$packageDir\mercury-chat.exe"
+
+          @"
+          Mercury Chat Windows ${{ matrix.arch }} package
+
+          Run:
+            mercury-chat.exe
+
+          Build metadata:
+            Mercury Chat commit: ${{ github.sha }}
+            Qt target: $env:QT_VERSION ${{ matrix.qt_arch }}
+            Hamlib CAT support: disabled in CI package
+          "@ | Set-Content -Encoding UTF8 "$packageDir\README-WINDOWS.txt"
+
+          Compress-Archive -Path $packageDir -DestinationPath "dist\$packageName.zip" -Force
+          "PACKAGE_ZIP=dist\$packageName.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mercury-chat-windows-${{ matrix.arch }}
+          path: ${{ env.PACKAGE_ZIP }}
+          if-no-files-found: error
