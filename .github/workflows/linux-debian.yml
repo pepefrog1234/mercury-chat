@@ -1,0 +1,105 @@
+name: Linux Debian packages
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  linux-debian-amd64:
+    name: Linux Debian 13.5 amd64
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:13.5
+
+    steps:
+      - name: Install checkout tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates \
+            git
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Debian amd64 environment
+        run: |
+          . /etc/os-release
+          echo "Debian $VERSION_ID / $(dpkg --print-architecture)"
+          test "$VERSION_ID" = "13"
+          test "$(dpkg --print-architecture)" = "amd64"
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            file \
+            libgl1-mesa-dev \
+            libqt6sql6-sqlite \
+            libxkbcommon-dev \
+            ninja-build \
+            pkg-config \
+            qt6-base-dev \
+            qt6-multimedia-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-linux-debian13.5-amd64 \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMERCURYCHAT_USE_HAMLIB=OFF
+
+      - name: Build
+        run: cmake --build build-linux-debian13.5-amd64 --parallel
+
+      - name: Test
+        run: ctest --test-dir build-linux-debian13.5-amd64 --output-on-failure
+
+      - name: Package
+        run: |
+          short_sha="$(printf '%s' "$GITHUB_SHA" | cut -c1-8)"
+          package_name="mercury-chat-0.1.0-linux-debian13.5-amd64-$short_sha"
+          package_dir="dist/$package_name"
+          mkdir -p "$package_dir"
+
+          cp build-linux-debian13.5-amd64/mercury-chat "$package_dir/"
+
+          cat > "$package_dir/README-DEBIAN.txt" <<EOF
+          Mercury Chat Linux Debian 13.5 amd64 package
+
+          Run:
+            ./mercury-chat
+
+          Runtime dependencies:
+            sudo apt-get install libqt6core6t64 libqt6gui6 libqt6multimedia6 libqt6network6 libqt6sql6 libqt6sql6-sqlite libqt6widgets6
+
+          Build metadata:
+            Mercury Chat commit: $GITHUB_SHA
+            Debian image: debian:13.5
+            Architecture: amd64
+            Hamlib CAT support: disabled in CI package
+
+          Note:
+            This package contains the Mercury Chat GUI only. Install the forked Mercury modem separately and configure the modem path in the application settings.
+          EOF
+
+          file "$package_dir/mercury-chat" > "$package_dir/BINARY-INFO.txt"
+          tar -C dist -czf "dist/$package_name.tar.gz" "$package_name"
+          echo "PACKAGE_TGZ=dist/$package_name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mercury-chat-linux-debian13.5-amd64
+          path: ${{ env.PACKAGE_TGZ }}
+          if-no-files-found: error
