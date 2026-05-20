@@ -51,6 +51,38 @@ jobs:
       - name: Install aqt
         run: python -m pip install --upgrade aqtinstall
 
+      - name: Patch aqt ARM64 script updater
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import aqt.updater
+
+          path = Path(aqt.updater.__file__)
+          text = path.read_text()
+          old = (
+              '        def patch_script(script_name):\n'
+              '            script_path = self.prefix / "bin" / (script_name + ".bat" if os_name.startswith("windows") else script_name)\n'
+              '            self.logger.info(f"Patching {script_path}")\n'
+              '            for unpatched in unpatched_paths():\n'
+              '                self._patch_textfile(script_path, f"{unpatched}bin", patched, is_executable=True)\n'
+          )
+          new = (
+              '        def patch_script(script_name):\n'
+              '            script_path = self.prefix / "bin" / (script_name + ".bat" if os_name.startswith("windows") else script_name)\n'
+              '            if not script_path.exists():\n'
+              '                self.logger.debug(f"Skipping missing Qt script {script_path}")\n'
+              '                return\n'
+              '            self.logger.info(f"Patching {script_path}")\n'
+              '            for unpatched in unpatched_paths():\n'
+              '                self._patch_textfile(script_path, f"{unpatched}bin", patched, is_executable=True)\n'
+          )
+          if old not in text:
+              raise SystemExit("aqt updater patch target not found")
+          path.write_text(text.replace(old, new))
+          print(f"Patched {path}")
+          '@ | python -
+
       - name: Install Qt
         shell: pwsh
         run: |
