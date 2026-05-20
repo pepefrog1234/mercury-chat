@@ -191,24 +191,8 @@ jobs:
 
           $manualDeploy = $false
           if ("${{ matrix.arch }}" -eq "arm64") {
-            $qtpaths = @(
-              "$qtTarget\bin\qtpaths.bat",
-              "$qtTarget\bin\qtpaths.exe",
-              "$qtTarget\bin\qtpaths6.bat",
-              "$qtTarget\bin\qtpaths6.exe"
-            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-
-            if ($qtpaths) {
-              $deployArgs = @("--release", "--compiler-runtime", "--no-translations", "--qtpaths", $qtpaths, "$packageDir\mercury-chat.exe")
-              & "$qtHost\bin\windeployqt.exe" @deployArgs
-              if ($LASTEXITCODE -ne 0) {
-                Write-Warning "windeployqt failed for ARM64; falling back to manual runtime copy"
-                $manualDeploy = $true
-              }
-            } else {
-              Write-Warning "No ARM64 qtpaths helper found; falling back to manual runtime copy"
-              $manualDeploy = $true
-            }
+            Write-Warning "Using manual ARM64 runtime copy because target Qt tools cannot run on the x64 runner"
+            $manualDeploy = $true
           } else {
             & "$qtTarget\bin\windeployqt.exe" `
               --release `
@@ -222,6 +206,7 @@ jobs:
 
           if ($manualDeploy) {
             Copy-QtRuntimeManually $qtTarget $packageDir
+            $global:LASTEXITCODE = 0
           }
 
           @"
