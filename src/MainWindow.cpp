@@ -131,6 +131,19 @@ QString comboValue(const QComboBox *combo)
     return combo->currentText().trimmed();
 }
 
+bool isDecimalDeviceId(const QString &value)
+{
+    if (value.isEmpty())
+        return false;
+
+    for (const QChar ch : value)
+    {
+        if (!ch.isDigit())
+            return false;
+    }
+    return true;
+}
+
 QString audioDeviceLabel(const AudioDeviceChoice &device)
 {
     if (device.id.isEmpty() || device.id == device.name)
@@ -155,7 +168,9 @@ QList<AudioDeviceChoice> qtAudioDeviceChoices(const QList<QAudioDevice> &devices
     return choices;
 }
 
-QList<AudioDeviceChoice> parseMercuryAudioDevices(const QString &output, const QString &sectionName)
+QList<AudioDeviceChoice> parseMercuryAudioDevices(const QString &output,
+                                                  const QString &sectionName,
+                                                  bool useNameAsValue)
 {
     QList<AudioDeviceChoice> choices;
     bool inWantedSection = false;
@@ -185,17 +200,18 @@ QList<AudioDeviceChoice> parseMercuryAudioDevices(const QString &output, const Q
         if (name.isEmpty() || id.isEmpty())
             continue;
 
+        const QString value = useNameAsValue ? name : id;
         bool duplicate = false;
         for (const AudioDeviceChoice &choice : choices)
         {
-            if (choice.id == id)
+            if (choice.id == value)
             {
                 duplicate = true;
                 break;
             }
         }
         if (!duplicate)
-            choices.append({id, name});
+            choices.append({value, name});
     }
 
     return choices;
@@ -230,8 +246,10 @@ QList<AudioDeviceChoice> mercuryAudioDeviceChoices(const QString &executable,
         return {};
 
     const QString output = QString::fromLocal8Bit(process.readAll());
+    const bool useNameAsValue = soundSystem == QLatin1String("coreaudio");
     return parseMercuryAudioDevices(output, capture ? QStringLiteral("capture")
-                                                   : QStringLiteral("playback"));
+                                                   : QStringLiteral("playback"),
+                                    useNameAsValue);
 }
 
 void populateAudioDeviceCombo(QComboBox *combo,
@@ -260,6 +278,12 @@ void populateAudioDeviceCombo(QComboBox *combo,
             combo->setCurrentIndex(i);
             return;
         }
+    }
+
+    if (!devices.isEmpty() && isDecimalDeviceId(selectedValue))
+    {
+        combo->setCurrentIndex(0);
+        return;
     }
 
     combo->setCurrentText(selectedValue);
@@ -1131,9 +1155,21 @@ void MainWindow::startModem()
 {
     saveSettings();
 
+    const int basePort = basePortSpin_->value();
+    const int dataPort = basePort + 1;
+    const int broadcastPort = broadcastPortSpin_->value();
+    if (broadcastPort == basePort || broadcastPort == dataPort)
+    {
+        QMessageBox::warning(this,
+                             QStringLiteral("Port conflict"),
+                             QStringLiteral("Broadcast port must not equal the ARQ control or data port."));
+        appendStatusLine(QStringLiteral("Modem start blocked: broadcast port conflicts with ARQ ports."));
+        return;
+    }
+
     QStringList arguments;
-    arguments << QStringLiteral("-p") << QString::number(basePortSpin_->value());
-    arguments << QStringLiteral("-b") << QString::number(broadcastPortSpin_->value());
+    arguments << QStringLiteral("-p") << QString::number(basePort);
+    arguments << QStringLiteral("-b") << QString::number(broadcastPort);
     const QString soundSystem = soundSystemCombo_->currentData().toString();
     if (!soundSystem.isEmpty() && soundSystem != QLatin1String("auto"))
         arguments << QStringLiteral("-x") << soundSystem;
