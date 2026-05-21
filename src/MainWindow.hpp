@@ -19,6 +19,7 @@ class QPlainTextEdit;
 class QProgressBar;
 class QPushButton;
 class QSettings;
+class QSlider;
 class QSpinBox;
 class QTableWidget;
 class QTextEdit;
@@ -101,6 +102,9 @@ private:
     void onLinkIdleTimeout();
     void updateBitrateLabels(int speedLevel, int bitsPerSecond);
     void updateTxBitrateLabels(int speedLevel, int bitsPerSecond);
+    int txVolumePercent() const;
+    void updateTxVolumeLabel();
+    void applyTxVolumeToTnc();
     void updateBeaconRow(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr);
     bool applyStationSettings(bool warnIfMissing);
     bool connectCat(bool interactive);
@@ -160,6 +164,8 @@ private:
     QComboBox *inputDeviceCombo_ = nullptr;
     QComboBox *outputDeviceCombo_ = nullptr;
     QComboBox *captureChannelCombo_ = nullptr;
+    QSlider *txVolumeSlider_ = nullptr;
+    QLabel *txVolumeValueLabel_ = nullptr;
 
     QLineEdit *hostEdit_ = nullptr;
     QSpinBox *basePortSpin_ = nullptr;
@@ -192,6 +198,7 @@ private:
     QTimer *linkIdleTimer_ = nullptr;
     QTimer *transferIdleTimer_ = nullptr;
     QTimer *remoteTypingTimer_ = nullptr;
+    QTimer *txVolumeApplyTimer_ = nullptr;
     int tncRetryAttempts_ = 0;
 
     QTextEdit *transcript_ = nullptr;

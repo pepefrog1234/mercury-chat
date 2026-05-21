@@ -27,6 +27,7 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
@@ -372,10 +373,28 @@ void MainWindow::buildUi()
     captureChannelCombo_->addItem(QStringLiteral("Left"), QStringLiteral("left"));
     captureChannelCombo_->addItem(QStringLiteral("Right"), QStringLiteral("right"));
     captureChannelCombo_->addItem(QStringLiteral("Stereo"), QStringLiteral("stereo"));
+    txVolumeSlider_ = new QSlider(Qt::Horizontal, audioGroup);
+    txVolumeSlider_->setRange(0, 200);
+    txVolumeSlider_->setSingleStep(1);
+    txVolumeSlider_->setPageStep(10);
+    txVolumeSlider_->setTickInterval(25);
+    txVolumeSlider_->setTickPosition(QSlider::TicksBelow);
+    txVolumeSlider_->setValue(100);
+    txVolumeSlider_->setToolTip(QStringLiteral("Adjust modem TX audio output level"));
+    txVolumeValueLabel_ = new QLabel(audioGroup);
+    txVolumeValueLabel_->setMinimumWidth(52);
+    txVolumeValueLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    auto *txVolumeRow = new QWidget(audioGroup);
+    auto *txVolumeLayout = new QHBoxLayout(txVolumeRow);
+    txVolumeLayout->setContentsMargins(0, 0, 0, 0);
+    txVolumeLayout->addWidget(txVolumeSlider_, 1);
+    txVolumeLayout->addWidget(txVolumeValueLabel_);
     audioLayout->addRow(QStringLiteral("Sound system"), soundSystemCombo_);
     audioLayout->addRow(QStringLiteral("Input device"), inputDeviceCombo_);
     audioLayout->addRow(QStringLiteral("Output device"), outputDeviceCombo_);
+    audioLayout->addRow(QStringLiteral("TX volume"), txVolumeRow);
     audioLayout->addRow(QStringLiteral("RX channel"), captureChannelCombo_);
+    updateTxVolumeLabel();
 
     auto *stationGroup = new QGroupBox(QStringLiteral("Station / TNC"), leftPanel);
     auto *stationLayout = new QFormLayout(stationGroup);
@@ -668,6 +687,9 @@ void MainWindow::buildUi()
     remoteTypingTimer_ = new QTimer(this);
     remoteTypingTimer_->setSingleShot(true);
     remoteTypingTimer_->setInterval(kRemoteTypingVisibleMs);
+    txVolumeApplyTimer_ = new QTimer(this);
+    txVolumeApplyTimer_->setSingleShot(true);
+    txVolumeApplyTimer_->setInterval(200);
 }
 
 void MainWindow::loadSettings()
@@ -687,6 +709,8 @@ void MainWindow::loadSettings()
     const QString outputDevice = settings->value(QStringLiteral("audio/outputDevice")).toString();
     if (!setComboCurrentData(outputDeviceCombo_, outputDevice))
         outputDeviceCombo_->setCurrentText(outputDevice);
+    txVolumeSlider_->setValue(settings->value(QStringLiteral("audio/txVolumePercent"), txVolumeSlider_->value()).toInt());
+    updateTxVolumeLabel();
     setComboCurrentData(captureChannelCombo_, settings->value(QStringLiteral("audio/captureChannel"), currentComboData(captureChannelCombo_, QStringLiteral("left"))));
 
     callsignEdit_->setText(settings->value(QStringLiteral("station/callsign")).toString());
@@ -728,6 +752,7 @@ void MainWindow::saveSettings() const
     settings->setValue(QStringLiteral("audio/soundSystem"), currentComboData(soundSystemCombo_, QStringLiteral("auto")));
     settings->setValue(QStringLiteral("audio/inputDevice"), comboValue(inputDeviceCombo_));
     settings->setValue(QStringLiteral("audio/outputDevice"), comboValue(outputDeviceCombo_));
+    settings->setValue(QStringLiteral("audio/txVolumePercent"), txVolumePercent());
     settings->setValue(QStringLiteral("audio/captureChannel"), currentComboData(captureChannelCombo_, QStringLiteral("left")));
 
     settings->setValue(QStringLiteral("station/callsign"), localCallsign());
@@ -918,6 +943,12 @@ void MainWindow::wireSignals()
         refreshAudioDeviceLists();
         saveSettings();
     });
+    connect(txVolumeSlider_, &QSlider::valueChanged, this, [this](int) {
+        updateTxVolumeLabel();
+        saveSettings();
+        if (txVolumeApplyTimer_)
+            txVolumeApplyTimer_->start();
+    });
 
     connect(tncConnectButton_, &QPushButton::clicked, this, &MainWindow::connectTnc);
     connect(stationInitButton_, &QPushButton::clicked, this, &MainWindow::initializeStation);
@@ -961,6 +992,7 @@ void MainWindow::wireSignals()
     connect(linkIdleTimer_, &QTimer::timeout, this, &MainWindow::onLinkIdleTimeout);
     connect(transferIdleTimer_, &QTimer::timeout, this, &MainWindow::setTransferIdle);
     connect(remoteTypingTimer_, &QTimer::timeout, this, &MainWindow::clearRemoteTypingIndicator);
+    connect(txVolumeApplyTimer_, &QTimer::timeout, this, &MainWindow::applyTxVolumeToTnc);
     connect(typingIndicatorCheck_, &QCheckBox::toggled, this, [this]() {
         saveSettings();
     });
@@ -1111,6 +1143,7 @@ void MainWindow::startModem()
     const QString outputDevice = comboValue(outputDeviceCombo_);
     if (!outputDevice.isEmpty())
         arguments << QStringLiteral("-o") << outputDevice;
+    arguments << QStringLiteral("-Y") << QString::number(txVolumePercent());
     arguments << QStringLiteral("-k") << captureChannelCombo_->currentData().toString();
     arguments.append(QProcess::splitCommand(modemArgsEdit_->text()));
 
@@ -1557,6 +1590,7 @@ void MainWindow::updateTncState(bool controlConnected, bool dataConnected)
     if (controlConnected)
     {
         tncRetryTimer_->stop();
+        applyTxVolumeToTnc();
         autoInitializeStation();
     }
     stationInitButton_->setEnabled(controlConnected);
@@ -2037,6 +2071,25 @@ void MainWindow::updateTxBitrateLabels(int speedLevel, int bitsPerSecond)
                                                   currentTxBitrateBps_,
                                                   currentBitrateLevel_,
                                                   currentBitrateBps_));
+}
+
+int MainWindow::txVolumePercent() const
+{
+    return txVolumeSlider_ ? txVolumeSlider_->value() : 100;
+}
+
+void MainWindow::updateTxVolumeLabel()
+{
+    if (txVolumeValueLabel_)
+        txVolumeValueLabel_->setText(QStringLiteral("%1%").arg(txVolumePercent()));
+}
+
+void MainWindow::applyTxVolumeToTnc()
+{
+    if (!tnc_.isControlConnected())
+        return;
+
+    tnc_.sendCommand(QStringLiteral("TXGAIN %1").arg(txVolumePercent()));
 }
 
 void MainWindow::updateBeaconRow(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr)
