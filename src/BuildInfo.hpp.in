@@ -1,0 +1,7 @@
+#pragma once
+
+namespace BuildInfo
+{
+constexpr const char *Version = "@PROJECT_VERSION@";
+constexpr const char *GitHash = "@MERCURYCHAT_GIT_HASH@";
+}

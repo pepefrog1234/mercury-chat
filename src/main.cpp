@@ -1,5 +1,7 @@
 #include "MainWindow.hpp"
 
+#include "BuildInfo.hpp"
+
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
@@ -11,7 +13,9 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName(QStringLiteral("Rhizomatica"));
     QCoreApplication::setApplicationName(QStringLiteral("MercuryChat"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+    QCoreApplication::setApplicationVersion(
+        QStringLiteral("%1 (%2)").arg(QString::fromLatin1(BuildInfo::Version),
+                                      QString::fromLatin1(BuildInfo::GitHash)));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Mercury Chat"));

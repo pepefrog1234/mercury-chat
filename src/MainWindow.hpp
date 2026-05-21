@@ -67,6 +67,7 @@ private:
     void loadSettings();
     void saveSettings() const;
     void refreshAudioDeviceLists();
+    void refreshModemVersion();
     void initializeDatabase();
     QString defaultDatabasePath() const;
     void recordBeaconEvent(const QString &callsign, int bandwidthHz, double snrDb, bool hasSnr);
@@ -159,6 +160,7 @@ private:
     QCheckBox *autoStartModemCheck_ = nullptr;
     QPushButton *modemStartButton_ = nullptr;
     QPushButton *modemStopButton_ = nullptr;
+    QLabel *modemVersionLabel_ = nullptr;
     QLabel *modemStatusLabel_ = nullptr;
     QComboBox *soundSystemCombo_ = nullptr;
     QComboBox *inputDeviceCombo_ = nullptr;

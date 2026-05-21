@@ -1,5 +1,6 @@
 #include "MainWindow.hpp"
 
+#include "BuildInfo.hpp"
 #include "ChatProtocol.hpp"
 
 #include <QCheckBox>
@@ -76,6 +77,54 @@ QString transferRateLabel(int txSpeedLevel, int txBitsPerSecond, int rxSpeedLeve
     return QStringLiteral("TX %1 / RX %2")
         .arg(bitrateLabel(txSpeedLevel, txBitsPerSecond),
              bitrateLabel(rxSpeedLevel, rxBitsPerSecond));
+}
+
+QString applicationTitlePrefix()
+{
+    const QString version = QString::fromLatin1(BuildInfo::Version).trimmed();
+    const QString gitHash = QString::fromLatin1(BuildInfo::GitHash).trimmed();
+    if (gitHash.isEmpty() || gitHash == QStringLiteral("unknown"))
+        return QStringLiteral("Mercury Chat %1").arg(version);
+    return QStringLiteral("Mercury Chat %1 (%2)").arg(version, gitHash);
+}
+
+QString parseMercuryVersionLabel(QString output)
+{
+    output.remove(QRegularExpression(QStringLiteral("\\x1B\\[[0-?]*[ -/]*[@-~]")));
+    static const QRegularExpression versionLine(
+        QStringLiteral("Mercury\\s+Version\\s+([^\\s]+)\\s+\\(git\\s+([^)]+)\\)"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    const QRegularExpressionMatch match = versionLine.match(output);
+    if (!match.hasMatch())
+        return {};
+
+    return QStringLiteral("%1 (git %2)")
+        .arg(match.captured(1).trimmed(),
+             match.captured(2).trimmed());
+}
+
+QString mercuryVersionLabel(const QString &executable)
+{
+    if (executable.trimmed().isEmpty())
+        return QStringLiteral("Not selected");
+
+    QProcess process;
+    process.setProgram(executable.trimmed());
+    process.setArguments({QStringLiteral("-V")});
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.start();
+    if (!process.waitForStarted(1200))
+        return QStringLiteral("Unavailable");
+    if (!process.waitForFinished(1500))
+    {
+        process.kill();
+        process.waitForFinished(1000);
+        return QStringLiteral("Unavailable");
+    }
+
+    const QString parsed = parseMercuryVersionLabel(QString::fromLocal8Bit(process.readAll()));
+    return parsed.isEmpty() ? QStringLiteral("Unavailable") : parsed;
 }
 
 QString utcTimeLabel()
@@ -300,9 +349,10 @@ MainWindow::MainWindow(const QString &settingsFile, const QString &profileName, 
     refreshAudioDeviceLists();
     initializeDatabase();
     wireSignals();
+    refreshModemVersion();
     setWindowTitle(profileName_.isEmpty()
-                       ? QStringLiteral("Mercury Chat")
-                       : QStringLiteral("Mercury Chat - %1").arg(profileName_));
+                       ? applicationTitlePrefix()
+                       : QStringLiteral("%1 - %2").arg(applicationTitlePrefix(), profileName_));
     if (!settingsFile_.isEmpty())
         appendStatusLine(QStringLiteral("settings: %1").arg(settingsFile_));
     QTimer::singleShot(0, this, [this]() {
@@ -369,6 +419,9 @@ void MainWindow::buildUi()
     modemButtonLayout->addWidget(modemStartButton_);
     modemButtonLayout->addWidget(modemStopButton_);
     modemLayout->addRow(QStringLiteral("Executable"), modemPathEdit_);
+    modemVersionLabel_ = new QLabel(QStringLiteral("Checking..."), modemGroup);
+    modemVersionLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    modemLayout->addRow(QStringLiteral("Version"), modemVersionLabel_);
     modemLayout->addRow(QStringLiteral("Broadcast port"), broadcastPortSpin_);
     modemLayout->addRow(QStringLiteral("Extra args"), modemArgsEdit_);
     modemLayout->addRow(modemButtonRow);
@@ -820,6 +873,14 @@ void MainWindow::refreshAudioDeviceLists()
     populateAudioDeviceCombo(outputDeviceCombo_, outputs, selectedOutput);
 }
 
+void MainWindow::refreshModemVersion()
+{
+    if (!modemVersionLabel_)
+        return;
+
+    modemVersionLabel_->setText(mercuryVersionLabel(modemPathEdit_->text()));
+}
+
 void MainWindow::initializeDatabase()
 {
     QString error;
@@ -961,6 +1022,7 @@ void MainWindow::wireSignals()
     });
     connect(modemPathEdit_, &QLineEdit::editingFinished, this, [this]() {
         refreshAudioDeviceLists();
+        refreshModemVersion();
         saveSettings();
     });
     connect(soundSystemCombo_, &QComboBox::currentIndexChanged, this, [this](int) {

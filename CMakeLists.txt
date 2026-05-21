@@ -17,6 +17,25 @@ find_package(Qt6 REQUIRED COMPONENTS Core Multimedia Network Sql Widgets)
 
 option(MERCURYCHAT_USE_HAMLIB "Build hamlib CAT support" ON)
 
+set(MERCURYCHAT_GIT_HASH "unknown")
+find_package(Git QUIET)
+if(Git_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" rev-parse --short=12 HEAD
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE MERCURYCHAT_GIT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+endif()
+if(NOT MERCURYCHAT_GIT_HASH)
+    set(MERCURYCHAT_GIT_HASH "unknown")
+endif()
+
+configure_file(
+    src/BuildInfo.hpp.in
+    generated/BuildInfo.hpp
+    @ONLY)
+
 if(MERCURYCHAT_USE_HAMLIB)
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
@@ -52,6 +71,7 @@ add_library(mercurychat_core STATIC
     src/TncClient.hpp)
 
 target_include_directories(mercurychat_core PUBLIC src)
+target_include_directories(mercurychat_core PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(mercurychat_core PUBLIC Qt6::Core Qt6::Network Qt6::Sql)
 
 if(MERCURYCHAT_USE_HAMLIB)
