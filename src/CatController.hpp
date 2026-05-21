@@ -2,6 +2,7 @@
 
 #include <QList>
 #include <QObject>
+#include <QProcess>
 #include <QString>
 
 #if MERCURYCHAT_WITH_HAMLIB
@@ -59,8 +60,26 @@ signals:
     void pttChanged(bool enabled);
 
 private:
+    static QString findHamlibTool(const QString &toolName);
+    static bool parseHostPort(const QString &text, QString *host, quint16 *port);
+    static QString pttTypeName(CatPttMethod pttMethod);
+    static QString serialLineStateName(CatSerialLineState state);
+
+    bool connectToRigctld(const QString &host, quint16 port, int timeoutMs = 3000) const;
+    QStringList sendRigctldCommand(const QString &command, bool *ok = nullptr, int timeoutMs = 3000) const;
+    bool startBundledRigctld(int modelId,
+                             const QString &devicePath,
+                             int serialSpeed,
+                             CatSerialLineState rtsState,
+                             CatSerialLineState dtrState,
+                             CatPttMethod pttMethod);
+
 #if MERCURYCHAT_WITH_HAMLIB
     RIG *rig_ = nullptr;
 #endif
+    QProcess rigctldProcess_;
+    QString rigctldHost_;
+    quint16 rigctldPort_ = 0;
+    bool rigctldManaged_ = false;
     bool connected_ = false;
 };

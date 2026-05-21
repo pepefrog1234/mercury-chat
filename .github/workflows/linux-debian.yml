@@ -87,10 +87,11 @@ jobs:
             Mercury Chat commit: $GITHUB_SHA
             Debian image: debian:13.5
             Architecture: amd64
-            Hamlib CAT support: disabled in CI package
+            Hamlib linked-library CAT support: disabled in CI package
+            External rigctl/rigctld CAT support: available when Hamlib tools are installed in PATH
 
           Note:
-            This package contains the Mercury Chat GUI only. Install the forked Mercury modem separately and configure the modem path in the application settings.
+            This package contains the Mercury Chat GUI only. Install the forked Mercury modem separately and configure the modem path in the application settings. Install Hamlib rigctl/rigctld separately if you want CAT control on Linux.
           EOF
 
           file "$package_dir/mercury-chat" > "$package_dir/BINARY-INFO.txt"

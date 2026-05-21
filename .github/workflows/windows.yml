@@ -15,6 +15,8 @@ env:
   MERCURY_MODEM_TAG: "fork-c4272747"
   MERCURY_MODEM_ASSET: "mercury-1.9.8-w64-c4272747.zip"
   MERCURY_MODEM_COMMIT: "c4272747"
+  HAMLIB_TAG: "4.7.1"
+  HAMLIB_ASSET: "hamlib-w64-4.7.1.zip"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -157,6 +159,31 @@ jobs:
           "MODEM_PACKAGE_DIR=$($modemDir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "Using Mercury modem package from $($modemDir.FullName)"
 
+      - name: Download Hamlib CAT tools
+        shell: pwsh
+        run: |
+          $downloadRoot = "$env:RUNNER_TEMP\hamlib"
+          New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
+
+          $url = "https://github.com/Hamlib/Hamlib/releases/download/$env:HAMLIB_TAG/$env:HAMLIB_ASSET"
+          $zipPath = "$downloadRoot\$env:HAMLIB_ASSET"
+
+          Write-Host "Downloading Hamlib CAT tools: $url"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $downloadRoot -Force
+
+          $hamlibDir = Get-ChildItem -Path $downloadRoot -Directory -Recurse |
+            Where-Object { Test-Path (Join-Path $_.FullName "bin\rigctld.exe") } |
+            Select-Object -First 1
+
+          if (!$hamlibDir) {
+            Get-ChildItem -Path $downloadRoot -Recurse | ForEach-Object { Write-Host $_.FullName }
+            throw "Downloaded Hamlib package does not contain bin\rigctld.exe"
+          }
+
+          "HAMLIB_PACKAGE_DIR=$($hamlibDir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Using Hamlib CAT tools from $($hamlibDir.FullName)"
+
       - name: Package
         shell: pwsh
         run: |
@@ -176,6 +203,22 @@ jobs:
             Copy-Item (Join-Path $env:MODEM_PACKAGE_DIR "*") $packageDir -Recurse -Force
           } else {
             throw "MODEM_PACKAGE_DIR was not set or does not exist"
+          }
+
+          if ($env:HAMLIB_PACKAGE_DIR -and (Test-Path $env:HAMLIB_PACKAGE_DIR)) {
+            $hamlibDest = Join-Path $packageDir "hamlib"
+            $hamlibBinDest = Join-Path $hamlibDest "bin"
+            New-Item -ItemType Directory -Force -Path $hamlibBinDest | Out-Null
+            Copy-Item (Join-Path $env:HAMLIB_PACKAGE_DIR "bin\*.exe") $hamlibBinDest -Force
+            Copy-Item (Join-Path $env:HAMLIB_PACKAGE_DIR "bin\*.dll") $hamlibBinDest -Force
+            foreach ($license in @("LICENSE.txt", "COPYING.txt", "COPYING.LIB.txt")) {
+              $source = Join-Path $env:HAMLIB_PACKAGE_DIR $license
+              if (Test-Path $source) {
+                Copy-Item $source (Join-Path $hamlibDest $license) -Force
+              }
+            }
+          } else {
+            throw "HAMLIB_PACKAGE_DIR was not set or does not exist"
           }
 
           function Copy-OptionalFile($source, $destDir) {
@@ -257,8 +300,9 @@ jobs:
             Mercury modem commit: $env:MERCURY_MODEM_COMMIT
             Mercury modem source: https://github.com/$env:MERCURY_MODEM_REPO/releases/tag/$env:MERCURY_MODEM_TAG
             Qt target: $env:QT_VERSION ${{ matrix.qt_arch }}
-            Hamlib CAT support: disabled in CI package
-            Note: the bundled Mercury modem binary is Windows x64; on Windows ARM64 it runs under x64 emulation.
+            Hamlib CAT support: enabled through bundled rigctl/rigctld tools
+            Hamlib source: https://github.com/Hamlib/Hamlib/releases/tag/$env:HAMLIB_TAG
+            Note: the bundled Mercury modem and Hamlib CAT tools are Windows x64; on Windows ARM64 they run under x64 emulation.
           "@ | Set-Content -Encoding UTF8 "$packageDir\README-WINDOWS.txt"
 
           Compress-Archive -Path $packageDir -DestinationPath "dist\$packageName.zip" -Force
